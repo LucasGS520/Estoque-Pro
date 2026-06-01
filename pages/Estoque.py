@@ -1,3 +1,10 @@
+""" Tela de estoque, movimentações e cadastros.
+
+Concentra consulta de itens, registro de entradas/saídas e manutenção de itens,
+fornecedores e categorias. As ações de escrita chamam serviços que fazem
+`commit` e usam `st.rerun()` para atualizar a interface.
+"""
+
 import streamlit as st
 import pandas as pd
 
@@ -20,6 +27,7 @@ tab_visualizar, tab_movimentacao, tab_editar = st.tabs(
 
 # ── Tab 1: Visualizar ─────────────────────────────────────────────────────────
 with tab_visualizar:
+    # Carrega filtros antes dos itens para reduzir a consulta ao selecionar categoria.
     with SessionLocal() as session:
         categorias = estoque_service.get_categorias(session)
         cat_opcoes = {"Todas": None} | {c.nome: c.id for c in categorias}
@@ -86,6 +94,7 @@ with tab_movimentacao:
                 item_upd = estoque_service.registrar_movimentacao(
                     session, item_mov_id, tipo_mov, qtd_mov, motivo_mov or None, operador_mov or None
                 )
+        # Limpa campos controlados para evitar reaplicar a mesma movimentação após o rerun.
         for k in ["mov_tipo", "mov_qtd", "mov_motivo", "mov_operador"]:
             st.session_state.pop(k, None)
         st.session_state["_fb"] = (
@@ -105,6 +114,7 @@ with tab_editar:
         section_title("Itens cadastrados")
 
         with SessionLocal() as session:
+            # Consulta única para montar tabela e filtros da subaba de itens.
             cats_filtro = estoque_service.get_categorias(session)
             todos_itens = estoque_service.get_all_itens(session, apenas_ativos=False)
             todos_rows = [
@@ -349,6 +359,7 @@ with tab_editar:
         section_title("Fornecedores cadastrados")
 
         with SessionLocal() as session:
+            # Mantém dados tabulares e dados brutos separados para simplificar edição.
             fornecedores = fornecedor_service.get_all_fornecedores(session, apenas_ativos=False)
             df_forn_rows = [
                 {
@@ -510,6 +521,7 @@ with tab_editar:
         section_title("Categorias cadastradas")
 
         with SessionLocal() as session:
+            # Dados duplicados em formatos diferentes: tabela para leitura e dicts para formulário.
             categorias_all = estoque_service.get_categorias(session)
             df_cat_rows = [
                 {"ID": c.id, "Nome": c.nome, "Descrição": c.descricao or ""}

@@ -1,3 +1,9 @@
+""" Serviços de relatórios baseados no histórico de movimentações.
+
+As funções retornam `pandas.DataFrame` prontos para tabelas ou gráficos nas
+páginas Streamlit. Nenhuma função deste módulo persiste alterações no banco.
+"""
+
 from typing import Optional
 
 import pandas as pd
@@ -7,6 +13,7 @@ from core.models import Movimentacao, Item, Categoria
 
 
 def consumo_por_mes(session: Session, item_id: Optional[int] = None) -> pd.DataFrame:
+    """Agrupa movimentações de saída por mês e item."""
     q = session.query(Movimentacao).filter(Movimentacao.tipo == "saida")
     if item_id:
         q = q.filter(Movimentacao.item_id == item_id)
@@ -30,6 +37,7 @@ def consumo_por_mes(session: Session, item_id: Optional[int] = None) -> pd.DataF
 
 
 def consumo_por_categoria(session: Session) -> pd.DataFrame:
+    """Agrupa a quantidade consumida por categoria de item."""
     movs = session.query(Movimentacao).filter(Movimentacao.tipo == "saida").all()
     if not movs:
         return pd.DataFrame(columns=["categoria", "total_saida"])
@@ -61,6 +69,7 @@ def historico_movimentacoes(
     tipo: Optional[str] = None,
     limit: int = 200,
 ) -> pd.DataFrame:
+    """Retorna as movimentações mais recentes em formato tabular."""
     q = session.query(Movimentacao)
     if item_id:
         q = q.filter(Movimentacao.item_id == item_id)

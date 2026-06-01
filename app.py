@@ -1,3 +1,9 @@
+"""Ponto de entrada do sistema Streamlit.
+
+Configura a aplicação, inicializa o banco local, garante as pastas
+operacionais e registra a navegação manual usada pelas páginas.
+"""
+
 import streamlit as st
 
 from core.database import init_db

@@ -1,3 +1,9 @@
+""" Tela de análise de compras.
+
+Permite executar o motor de reposição, consultar o snapshot mais recente e
+baixar a lista de compras em `.docx` para os itens recomendados.
+"""
+
 import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import joinedload
@@ -76,6 +82,11 @@ tab_comprar, tab_zerado, tab_ok, tab_sem_min = st.tabs(
 
 
 def _gerar_doc_compras(df: pd.DataFrame) -> None:
+    """Gera e expõe o botão de download da lista de compras.
+
+    Recebe o DataFrame exibido na aba de compras. Se o módulo de documentos não
+    estiver disponível, informa o usuário sem interromper a tela.
+    """
     try:
         from documents.lista_compras import gerar_lista_compras
         path = gerar_lista_compras(df)
@@ -91,6 +102,7 @@ def _gerar_doc_compras(df: pd.DataFrame) -> None:
 
 
 def _snaps_to_df(snaps, item_data: dict) -> pd.DataFrame:
+    """Converte snapshots de análise em DataFrame pronto para exibição."""
     rows = []
     for s in snaps:
         item = item_data.get(s.item_id)

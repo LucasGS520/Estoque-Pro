@@ -1,3 +1,9 @@
+""" Tela de relatórios operacionais.
+
+Exibe gráficos e tabelas derivados do histórico de movimentações, sem alterar
+dados do banco.
+"""
+
 import streamlit as st
 import plotly.express as px
 
@@ -31,6 +37,7 @@ with tab_mensal:
         )
     else:
         with SessionLocal() as session:
+            # Mapeia IDs para nomes apenas quando há dados para plotar.
             itens_map = {i.id: i.nome for i in session.query(Item).all()}
         df_mensal["item"] = df_mensal["item_id"].map(itens_map)
         fig = px.line(
@@ -89,6 +96,7 @@ with tab_historico:
         empty_state("📋", "Nenhuma movimentação encontrada")
     else:
         with SessionLocal() as session:
+            # O serviço retorna item_id; a tela troca por nome para leitura do usuário.
             itens_map = {i.id: i.nome for i in session.query(Item).all()}
         if "item_id" in df_hist.columns:
             df_hist.insert(1, "item", df_hist["item_id"].map(itens_map))

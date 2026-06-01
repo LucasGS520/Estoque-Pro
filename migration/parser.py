@@ -1,5 +1,4 @@
-"""
-Lê o Excel de estoque com layout multi-painel (3 categorias lado a lado).
+""" Lê o Excel de estoque com layout multi-painel (3 categorias lado a lado).
 
 Estrutura da planilha:
   Linha 1 (idx 0): Título "CONTROLE DE MATERIAIS"
@@ -15,6 +14,7 @@ import openpyxl
 
 
 def _cell_val(cell) -> Any:
+    """Extrai e limpa o valor de uma célula do openpyxl."""
     if cell is None:
         return None
     v = cell.value
@@ -25,6 +25,7 @@ def _cell_val(cell) -> Any:
 
 
 def _to_int(val) -> int | None:
+    """Converte um valor para inteiro ou retorna `None` quando não for possível."""
     if val is None:
         return None
     try:
@@ -35,7 +36,7 @@ def _to_int(val) -> int | None:
 
 def parse_estoque(path: Path) -> tuple[list[dict], list[str]]:
     """
-    Retorna (registros, erros).
+    Lê a planilha de estoque e retorna `(registros, erros)`.
 
     Cada registro:
     {
@@ -100,7 +101,7 @@ def parse_estoque(path: Path) -> tuple[list[dict], list[str]]:
 
 def parse_fornecedores(path: Path) -> tuple[list[dict], list[str]]:
     """
-    Retorna (fornecedores, erros).
+    Lê a planilha de fornecedores e retorna `(fornecedores, erros)`.
 
     FORNECEDORES.xlsx:
       Linha 1: Cabeçalho (FORNECEDORES | Contato | Telefone)

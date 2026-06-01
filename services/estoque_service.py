@@ -1,3 +1,10 @@
+""" Serviços de consulta e manutenção do estoque.
+
+Concentra regras de negócio para itens, categorias, movimentações e KPIs. As
+funções de criação, atualização, exclusão e movimentação fazem `commit`; as
+funções de consulta apenas leem dados.
+"""
+
 import datetime
 import unicodedata
 from typing import Optional
@@ -8,6 +15,7 @@ from core.models import Categoria, Item, Movimentacao
 
 
 def _normalizar(texto: str) -> str:
+    """Normaliza texto para comparação sem acentos, caixa ou espaços extras."""
     nfkd = unicodedata.normalize("NFKD", texto)
     return " ".join(nfkd.encode("ascii", "ignore").decode().lower().split())
 
@@ -17,6 +25,7 @@ def get_all_itens(
     categoria_id: Optional[int] = None,
     apenas_ativos: bool = True,
 ) -> list[Item]:
+    """Lista itens com categoria carregada, filtrando por categoria e atividade."""
     q = session.query(Item).options(joinedload(Item.categoria))
     if apenas_ativos:
         q = q.filter(Item.ativo == True)  # noqa: E712
@@ -26,10 +35,12 @@ def get_all_itens(
 
 
 def get_item_by_id(session: Session, item_id: int) -> Optional[Item]:
+    """Busca um item pelo ID ou retorna `None` quando não existir."""
     return session.query(Item).filter_by(id=item_id).first()
 
 
 def get_categorias(session: Session) -> list[Categoria]:
+    """Lista todas as categorias em ordem alfabética."""
     return session.query(Categoria).order_by(Categoria.nome).all()
 
 
@@ -41,6 +52,11 @@ def update_limites(
     unidade: Optional[str] = None,
     observacoes: Optional[str] = None,
 ) -> Item:
+    """Atualiza limites, unidade e observações de um item existente.
+
+    Persiste a alteração com `commit` e retorna o item atualizado. Lança
+    `ValueError` quando o item não existe.
+    """
     item = session.query(Item).filter_by(id=item_id).first()
     if not item:
         raise ValueError(f"Item {item_id} não encontrado")
@@ -64,6 +80,11 @@ def registrar_movimentacao(
     motivo: Optional[str] = None,
     operador: Optional[str] = None,
 ) -> Item:
+    """Registra entrada ou saída e atualiza o saldo atual do item.
+
+    Cria uma linha em `movimentacoes`, grava o novo saldo no item e faz
+    `commit`. Saídas nunca deixam o estoque negativo.
+    """
     item = session.query(Item).filter_by(id=item_id).first()
     if not item:
         raise ValueError(f"Item {item_id} não encontrado")
@@ -101,6 +122,7 @@ def get_historico_movimentacoes(
     tipo: Optional[str] = None,
     limit: int = 200,
 ) -> list[Movimentacao]:
+    """Consulta o histórico de movimentações com filtros opcionais."""
     q = session.query(Movimentacao)
     if item_id:
         q = q.filter(Movimentacao.item_id == item_id)
@@ -110,6 +132,7 @@ def get_historico_movimentacoes(
 
 
 def get_kpis_basicos(session: Session) -> dict:
+    """Calcula indicadores simples de cadastro de itens e limites definidos."""
     total = session.query(Item).filter(Item.ativo == True).count()  # noqa: E712
     sem_minimo = (
         session.query(Item)
@@ -134,6 +157,11 @@ def create_item(
     observacoes: Optional[str] = None,
     ativo: bool = True,
 ) -> Item:
+    """Cria um item em uma categoria existente.
+
+    Valida categoria e duplicidade por nome normalizado dentro da mesma
+    categoria. Persiste com `commit` e retorna o item criado.
+    """
     cat = session.query(Categoria).filter_by(id=categoria_id).first()
     if not cat:
         raise ValueError(f"Categoria {categoria_id} não encontrada")
@@ -175,6 +203,12 @@ def update_item_completo(
     observacoes: Optional[str] = None,
     ativo: bool = True,
 ) -> Item:
+    """Atualiza dados cadastrais de um item existente.
+
+    Valida categoria, duplicidade de nome na categoria e persiste a alteração.
+    Não altera o estoque atual; movimentações devem passar por
+    `registrar_movimentacao`.
+    """
     item = session.query(Item).filter_by(id=item_id).first()
     if not item:
         raise ValueError(f"Item {item_id} não encontrado")
@@ -215,6 +249,7 @@ def create_categoria(
     nome: str,
     descricao: Optional[str] = None,
 ) -> Categoria:
+    """Cria uma categoria validando duplicidade por nome normalizado."""
     nome_norm = _normalizar(nome)
     existente = session.query(Categoria).all()
     for c in existente:
@@ -234,6 +269,7 @@ def update_categoria(
     nome: str,
     descricao: Optional[str] = None,
 ) -> Categoria:
+    """Atualiza nome e descrição de uma categoria existente."""
     cat = session.query(Categoria).filter_by(id=cat_id).first()
     if not cat:
         raise ValueError(f"Categoria {cat_id} não encontrada")
@@ -254,6 +290,7 @@ def update_categoria(
 
 
 def delete_item(session: Session, item_id: int) -> None:
+    """Remove permanentemente um item e registros dependentes em cascade."""
     item = session.query(Item).filter_by(id=item_id).first()
     if not item:
         raise ValueError(f"Item {item_id} não encontrado")
@@ -262,6 +299,7 @@ def delete_item(session: Session, item_id: int) -> None:
 
 
 def delete_categoria(session: Session, cat_id: int) -> None:
+    """Remove uma categoria somente quando ela não possui itens vinculados."""
     cat = session.query(Categoria).filter_by(id=cat_id).first()
     if not cat:
         raise ValueError(f"Categoria {cat_id} não encontrada")

@@ -1,3 +1,9 @@
+""" Serviços para consolidar orçamento preliminar de compras.
+
+Transforma resultados de análise em itens orçamentários, separando itens com e
+sem cotação válida e somando subtotais por fornecedor.
+"""
+
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -9,6 +15,8 @@ from services.fornecedor_service import get_best_price
 
 @dataclass
 class OrcamentoItem:
+    """Linha consolidada de orçamento para um item recomendado para compra."""
+
     item_id: int
     nome: str
     categoria: str
@@ -22,6 +30,8 @@ class OrcamentoItem:
 
 @dataclass
 class OrcamentoConsolidado:
+    """Resultado agregado do orçamento preliminar."""
+
     itens_com_preco: list[OrcamentoItem] = field(default_factory=list)
     itens_sem_preco: list[OrcamentoItem] = field(default_factory=list)
     total_estimado: float = 0.0
@@ -32,6 +42,11 @@ def consolidar_orcamento(
     session: Session,
     results: list[AnalysisResult],
 ) -> OrcamentoConsolidado:
+    """Consolida orçamento a partir dos resultados de análise de compras.
+
+    Consulta a melhor cotação de cada item crítico, calcula totais e separa os
+    itens sem preço para exibição específica na tela.
+    """
     orcamento = OrcamentoConsolidado()
 
     compras = [r for r in results if r.status in (ItemStatus.COMPRAR, ItemStatus.ZERADO)]

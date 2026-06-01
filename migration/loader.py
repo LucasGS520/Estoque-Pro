@@ -1,5 +1,7 @@
-"""
-Carrega dados transformados no SQLite com upsert seguro.
+""" Carrega dados transformados no SQLite com upsert seguro.
+
+Este módulo recebe dados já normalizados pelos transformers, cria ou atualiza
+registros no banco e registra cada execução na tabela `importacoes`.
 """
 
 import json
@@ -17,14 +19,15 @@ def carregar_itens(
     avisos: list[str],
 ) -> dict:
     """
-    Insere ou atualiza itens no banco.
+    Insere ou atualiza itens no banco e grava log de importação.
 
     Regra de upsert:
     - Se item com mesmo (nome_normalizado, categoria) já existe: atualiza estoque_atual.
       Não sobrescreve estoque_minimo/ideal caso já tenham sido definidos pelo usuário.
     - Se não existe: insere novo com estoque_minimo=0 e estoque_ideal=0.
 
-    Retorna dict com contagens e erros.
+    Retorna um dict com contagens e detalhes de erros/avisos. Faz `commit` ao
+    final da carga.
     """
     ok = 0
     erros: list[str] = list(avisos)
@@ -87,8 +90,10 @@ def carregar_fornecedores(
     arquivo_origem: str,
 ) -> dict:
     """
-    Insere ou atualiza fornecedores.
-    Upsert por nome (normalizado para comparação, mas mantém nome original).
+    Insere ou atualiza fornecedores e grava log de importação.
+
+    O upsert é feito por nome exato do fornecedor. Retorna contagens e detalhes
+    de erro, fazendo `commit` ao final.
     """
     ok = 0
     erros: list[str] = []

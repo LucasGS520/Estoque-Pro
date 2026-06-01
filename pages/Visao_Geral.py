@@ -1,3 +1,9 @@
+""" Dashboard de visão geral do estoque.
+
+Mostra KPIs de cadastro, último snapshot de compras, distribuição por categoria
+e itens críticos que exigem atenção operacional.
+"""
+
 import streamlit as st
 import plotly.express as px
 import pandas as pd
@@ -15,6 +21,7 @@ SessionLocal = get_session_factory()
 
 # ── KPIs de base ──────────────────────────────────────────────────────────────
 with SessionLocal() as session:
+    # KPIs de cadastro e snapshot mais recente são a base de toda a tela.
     kpis = get_kpis_basicos(session)
     snapshots = get_latest_snapshot(session)
 
@@ -47,6 +54,7 @@ section_title("Status por Categoria")
 
 with SessionLocal() as session:
     from core.models import Item, Categoria
+    # O snapshot guarda item_id; o mapa recupera a categoria atual para o gráfico.
     itens_map = {
         i.id: i.categoria.nome
         for i in session.query(Item).all()
@@ -96,6 +104,7 @@ if criticos:
     rows_crit = []
     with SessionLocal() as session:
         from core.models import Item
+        # Limita a prévia do dashboard; a lista completa fica na tela Compras.
         for s in criticos[:20]:
             item = session.query(Item).filter_by(id=s.item_id).first()
             if item:

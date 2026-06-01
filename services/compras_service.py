@@ -1,3 +1,10 @@
+""" Serviços de análise de compras e snapshots de reposição.
+
+Conecta o motor puro de estoque (`core.engine`) aos modelos persistidos no
+banco. As funções deste módulo leem itens ativos, escolhem cotações válidas e
+persistem o resultado da análise em `snapshots_analise`.
+"""
+
 from sqlalchemy.orm import Session, joinedload
 
 from core.engine import StockAnalyzer, ItemRecord, AnalysisResult, AnalysisSummary
@@ -6,6 +13,11 @@ from services.fornecedor_service import get_best_price
 
 
 def _item_to_record(item: Item, session: Session) -> ItemRecord:
+    """Converte um `Item` ORM em `ItemRecord` para o motor de análise.
+
+    Consulta a melhor cotação válida do item para preencher preço e fornecedor
+    sugerido. Não persiste alterações.
+    """
     melhor_preco = get_best_price(session, item.id)
     return ItemRecord(
         item_id=item.id,
@@ -22,8 +34,11 @@ def _item_to_record(item: Item, session: Session) -> ItemRecord:
 
 def run_analysis(session: Session) -> tuple[list[AnalysisResult], AnalysisSummary]:
     """
-    Executa o motor de análise, persiste resultados em snapshots_analise e retorna
-    (resultados, sumário).
+    Executa a análise de reposição e substitui o snapshot anterior.
+
+    Lê todos os itens ativos, calcula resultados com `StockAnalyzer`, apaga os
+    snapshots antigos e grava os novos em uma única transação. Retorna a lista
+    de resultados calculados e o resumo agregado.
     """
     itens = (
         session.query(Item)
@@ -54,6 +69,7 @@ def run_analysis(session: Session) -> tuple[list[AnalysisResult], AnalysisSummar
 
 
 def get_latest_snapshot(session: Session) -> list[SnapshotAnalise]:
+    """Retorna os snapshots atualmente persistidos, do mais recente ao antigo."""
     return (
         session.query(SnapshotAnalise)
         .options(joinedload(SnapshotAnalise.fornecedor_sugerido))
@@ -63,6 +79,7 @@ def get_latest_snapshot(session: Session) -> list[SnapshotAnalise]:
 
 
 def get_purchase_list(session: Session) -> list[SnapshotAnalise]:
+    """Retorna apenas snapshots que exigem compra ou atenção por estoque zerado."""
     return (
         session.query(SnapshotAnalise)
         .options(joinedload(SnapshotAnalise.fornecedor_sugerido))

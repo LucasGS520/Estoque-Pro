@@ -1,12 +1,14 @@
-"""
-Normaliza os dados brutos do parser para objetos prontos para inserção no banco.
+""" Normaliza os dados brutos do parser para objetos prontos para inserção no banco.
+
+Transformers não acessam o banco: eles limpam textos, removem duplicidades e
+preparam dicts para o loader persistir.
 """
 
 import unicodedata
 
 
 def normalizar_texto(texto: str) -> str:
-    """Converte para ASCII lowercase sem acentos, para uso como chave de matching."""
+    """Converte texto para ASCII lowercase sem acentos, usado como chave."""
     nfkd = unicodedata.normalize("NFKD", texto)
     ascii_str = nfkd.encode("ascii", "ignore").decode("ascii")
     return " ".join(ascii_str.lower().split())
@@ -14,9 +16,7 @@ def normalizar_texto(texto: str) -> str:
 
 def transformar_itens(registros: list[dict]) -> tuple[list[dict], list[str]]:
     """
-    Recebe registros brutos do parser e devolve:
-    - lista de itens normalizados prontos para o loader
-    - lista de avisos (duplicatas, etc.)
+    Recebe registros brutos do parser e devolve itens normalizados e avisos.
 
     Cada item de saída:
     {
@@ -67,7 +67,7 @@ def transformar_itens(registros: list[dict]) -> tuple[list[dict], list[str]]:
 
 
 def transformar_fornecedores(registros: list[dict]) -> list[dict]:
-    """Limpa e normaliza dados de fornecedores."""
+    """Limpa fornecedores brutos, descartando registros sem nome."""
     return [
         {
             "nome": r["nome"].strip(),

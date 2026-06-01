@@ -1,3 +1,10 @@
+""" Modelos ORM que representam o domínio de estoque e compras.
+
+Cada classe corresponde a uma tabela do SQLite e concentra os relacionamentos
+usados pelos serviços para navegar entre itens, fornecedores, cotações,
+movimentações, análises e logs de importação.
+"""
+
 import datetime
 
 from sqlalchemy import (
@@ -10,6 +17,8 @@ from core.database import Base
 
 
 class Categoria(Base):
+    """Agrupa itens de estoque por família operacional."""
+
     __tablename__ = "categorias"
 
     id = Column(Integer, primary_key=True)
@@ -21,6 +30,8 @@ class Categoria(Base):
 
 
 class Item(Base):
+    """Produto ou material controlado no estoque."""
+
     __tablename__ = "itens"
 
     id = Column(Integer, primary_key=True)
@@ -43,6 +54,8 @@ class Item(Base):
 
 
 class Fornecedor(Base):
+    """Fornecedor usado em cotações e sugestões de compra."""
+
     __tablename__ = "fornecedores"
 
     id = Column(Integer, primary_key=True)
@@ -58,6 +71,8 @@ class Fornecedor(Base):
 
 
 class PrecoFornecedor(Base):
+    """Cotação de preço de um item em um fornecedor específico."""
+
     __tablename__ = "precos_fornecedor"
     __table_args__ = (
         UniqueConstraint("item_id", "fornecedor_id", "data_cotacao", name="uq_item_forn_data"),
@@ -77,6 +92,8 @@ class PrecoFornecedor(Base):
 
 
 class Movimentacao(Base):
+    """Registro histórico de entrada ou saída que altera o saldo do item."""
+
     __tablename__ = "movimentacoes"
 
     id = Column(Integer, primary_key=True)
@@ -93,6 +110,8 @@ class Movimentacao(Base):
 
 
 class SnapshotAnalise(Base):
+    """Resultado persistido da última análise de reposição por item."""
+
     __tablename__ = "snapshots_analise"
 
     id = Column(Integer, primary_key=True)
@@ -108,6 +127,8 @@ class SnapshotAnalise(Base):
 
 
 class Importacao(Base):
+    """Log de uma execução de importação de planilhas externas."""
+
     __tablename__ = "importacoes"
 
     id = Column(Integer, primary_key=True)

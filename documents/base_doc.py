@@ -1,3 +1,10 @@
+""" Helpers base para geração de documentos Word.
+
+Fornece criação de documento com identidade do sistema, tabelas padronizadas e
+salvamento em `EXPORTS_DIR`. As funções aqui são reutilizadas pelos documentos
+de lista de compras e orçamento.
+"""
+
 import datetime
 from pathlib import Path
 from typing import Sequence
@@ -12,6 +19,7 @@ from core.config import EXPORTS_DIR
 
 
 def criar_documento(titulo: str) -> Document:
+    """Cria um documento Word com cabeçalho, título e data de geração."""
     doc = Document()
 
     # Margens
@@ -49,6 +57,11 @@ def adicionar_tabela(
     rows: Sequence[Sequence],
     col_widths: Sequence[float] | None = None,
 ) -> None:
+    """Adiciona uma tabela simples ao documento.
+
+    Recebe cabeçalhos, linhas e larguras opcionais em centímetros. Aplica
+    estilo visual básico e alternância de cor nas linhas.
+    """
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = "Table Grid"
 
@@ -80,6 +93,7 @@ def adicionar_tabela(
 
 
 def _set_cell_bg(cell, hex_color: str) -> None:
+    """Aplica cor de fundo hexadecimal a uma célula de tabela Word."""
     tc = cell._tc
     tcPr = tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
@@ -90,6 +104,7 @@ def _set_cell_bg(cell, hex_color: str) -> None:
 
 
 def salvar_com_timestamp(doc: Document, prefixo: str) -> Path:
+    """Salva o documento em `EXPORTS_DIR` com timestamp no nome do arquivo."""
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     nome = f"{prefixo}_{datetime.datetime.now().strftime('%Y_%m_%d_%H%M')}.docx"
     path = EXPORTS_DIR / nome
