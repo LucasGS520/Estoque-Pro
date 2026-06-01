@@ -27,7 +27,6 @@ tab_visualizar, tab_movimentacao, tab_editar = st.tabs(
 
 # ── Tab 1: Visualizar ─────────────────────────────────────────────────────────
 with tab_visualizar:
-    # Carrega filtros antes dos itens para reduzir a consulta ao selecionar categoria.
     with SessionLocal() as session:
         categorias = estoque_service.get_categorias(session)
         cat_opcoes = {"Todas": None} | {c.nome: c.id for c in categorias}
@@ -40,27 +39,41 @@ with tab_visualizar:
         cat_sel = st.selectbox("Filtrar por categoria", list(cat_opcoes.keys()))
 
     with SessionLocal() as session:
-        itens = estoque_service.get_all_itens(session, categoria_id=cat_opcoes[cat_sel])
+        master_rows = estoque_service.get_tabela_mestre(
+            session, categoria_id=cat_opcoes[cat_sel]
+        )
 
     busca_lower = busca.strip().lower()
-    rows = []
-    for item in itens:
-        if busca_lower and busca_lower not in item.nome.lower():
-            continue
-        rows.append({
-            "ID": item.id,
-            "Categoria": item.categoria.nome,
-            "Item": item.nome,
-            "Und.": item.unidade,
-            "Atual": item.estoque_atual,
-            "Mínimo": item.estoque_minimo,
-            "Ideal": item.estoque_ideal,
-            "Obs.": item.observacoes or "",
-        })
+    filtradas = [
+        r for r in master_rows
+        if not busca_lower or busca_lower in r["item"].lower()
+    ]
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame([
+        {
+            "ID": r["id"],
+            "Categoria": r["categoria"],
+            "Item": r["item"],
+            "Und.": r["unidade"],
+            "Atual": r["atual"],
+            "Mínimo": r["minimo"],
+            "Ideal": r["ideal"],
+            "Ult. Movimentação": (
+                r["ultima_mov_data"].strftime("%d/%m/%Y %H:%M")
+                if r["ultima_mov_data"] else "-"
+            ),
+            "Tipo Mov.": r["ultima_mov_tipo"].capitalize() if r["ultima_mov_tipo"] else "-",
+            "Fornecedor(es)": r["fornecedores"],
+            "Obs.": r["observacoes"],
+        }
+        for r in filtradas
+    ])
     st.dataframe(df, use_container_width=True, hide_index=True)
-    st.caption(f"{len(df)} itens exibidos")
+    total = len(master_rows)
+    label = f"{len(filtradas)} itens exibidos"
+    if len(filtradas) < total:
+        label += f" (de {total} no total)"
+    st.caption(label)
 
 # ── Tab 2: Registrar Movimentação ─────────────────────────────────────────────
 with tab_movimentacao:
@@ -172,7 +185,7 @@ with tab_editar:
 
         with _sep_itens:
             st.markdown(
-                '<div style="width:2px; background:#dee2e6; height:850px; margin:0 auto;"></div>',
+                '<div style="width:2px; background:#dee2e6; height:1100px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -187,41 +200,57 @@ with tab_editar:
             if not cat_opcoes_ni:
                 st.warning("Cadastre uma categoria antes de adicionar itens.")
             else:
-                ni_nome = st.text_input("Nome do produto", key="ni_nome")
-                ni_cat = st.selectbox("Categoria", list(cat_opcoes_ni.keys()), key="ni_cat")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    ni_und = st.text_input("Unidade", value="un", key="ni_und")
-                with col_b:
-                    ni_atual = st.number_input("Estoque Atual", min_value=0, value=0, key="ni_atual")
-                col_c, col_d = st.columns(2)
-                with col_c:
-                    ni_minimo = st.number_input("Mínimo", min_value=0, value=0, key="ni_minimo")
-                with col_d:
-                    ni_ideal = st.number_input("Ideal", min_value=0, value=0, key="ni_ideal")
-                ni_obs = st.text_area("Observações", height=68, key="ni_obs")
-                ni_ativo = st.checkbox("Ativo", value=True, key="ni_ativo")
+                with st.container(border=True):
+                    ni_nome = st.text_input("Nome do produto", key="ni_nome")
+                    ni_cat = st.selectbox("Categoria", list(cat_opcoes_ni.keys()), key="ni_cat")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        ni_und = st.text_input("Unidade", value="un", key="ni_und")
+                    with col_b:
+                        ni_atual = st.number_input("Estoque Atual", min_value=0, value=0, key="ni_atual")
+                    col_c, col_d = st.columns(2)
+                    with col_c:
+                        ni_minimo = st.number_input("Mínimo", min_value=0, value=0, key="ni_minimo")
+                    with col_d:
+                        ni_ideal = st.number_input("Ideal", min_value=0, value=0, key="ni_ideal")
+                    with SessionLocal() as session:
+                        forn_opts_ni = fornecedor_service.get_all_fornecedores(session)
+                        forn_map_ni = {f.nome: f.id for f in forn_opts_ni}
 
-                if st.button("Cadastrar", key="btn_ni_cadastrar", type="primary", use_container_width=True):
-                    if not ni_nome.strip():
-                        st.error("Nome não pode ficar em branco.")
-                    elif ni_ideal < ni_minimo:
-                        st.error("Ideal não pode ser menor que Mínimo.")
-                    else:
-                        try:
-                            with st.spinner("Salvando..."):
-                                with SessionLocal() as session:
-                                    item_criado = estoque_service.create_item(
-                                        session, cat_opcoes_ni[ni_cat], ni_nome, ni_und,
-                                        ni_atual, ni_minimo, ni_ideal, ni_obs or None, ni_ativo,
-                                    )
-                            for k in ["ni_nome", "ni_cat", "ni_und", "ni_atual", "ni_minimo",
-                                      "ni_ideal", "ni_obs", "ni_ativo"]:
-                                st.session_state.pop(k, None)
-                            st.session_state["_fb"] = ("success", f"Item **{item_criado.nome}** cadastrado.")
-                            st.rerun()
-                        except ValueError as e:
-                            st.error(str(e))
+                    ni_fornecedores = st.multiselect(
+                        "Fornecedores",
+                        options=list(forn_map_ni.keys()),
+                        placeholder="Selecione os fornecedores...",
+                        key="ni_fornecedores",
+                    )
+                    ni_obs = st.text_area("Observações", height=68, key="ni_obs")
+                    ni_ativo = st.checkbox("Ativo", value=True, key="ni_ativo")
+
+                    if st.button("Cadastrar", key="btn_ni_cadastrar", type="primary", use_container_width=True):
+                        if not ni_nome.strip():
+                            st.error("Nome não pode ficar em branco.")
+                        elif ni_ideal < ni_minimo:
+                            st.error("Ideal não pode ser menor que Mínimo.")
+                        else:
+                            try:
+                                with st.spinner("Salvando..."):
+                                    with SessionLocal() as session:
+                                        item_criado = estoque_service.create_item(
+                                            session, cat_opcoes_ni[ni_cat], ni_nome, ni_und,
+                                            ni_atual, ni_minimo, ni_ideal, ni_obs or None, ni_ativo,
+                                        )
+                                        if ni_fornecedores:
+                                            estoque_service.atualizar_fornecedores_item(
+                                                session, item_criado.id,
+                                                [forn_map_ni[n] for n in ni_fornecedores],
+                                            )
+                                for k in ["ni_nome", "ni_cat", "ni_und", "ni_atual", "ni_minimo",
+                                          "ni_ideal", "ni_fornecedores", "ni_obs", "ni_ativo"]:
+                                    st.session_state.pop(k, None)
+                                st.session_state["_fb"] = ("success", f"Item **{item_criado.nome}** cadastrado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
 
         # ── Editar / Remover item ─────────────────────────────────────────────
         with col_ei:
@@ -261,64 +290,79 @@ with tab_editar:
                         ei_unidade = _i.unidade
                         ei_minimo = _i.estoque_minimo
                         ei_ideal = _i.estoque_ideal
+                        ei_forn_atuais = [f.nome for f in _i.fornecedores_associados]
                         ei_obs = _i.observacoes or ""
                         ei_ativo = _i.ativo
+                        forn_opts_ei = fornecedor_service.get_all_fornecedores(session)
+                        forn_map_ei = {f.nome: f.id for f in forn_opts_ei}
 
-                    ei_novo_nome = st.text_input(
-                        "Nome do produto", value=ei_nome, key=f"ei_{item_ei_id}_nome"
-                    )
-                    ei_nova_cat = st.selectbox(
-                        "Categoria",
-                        list(cat_opcoes_ei.keys()),
-                        index=list(cat_opcoes_ei.values()).index(ei_cat_id),
-                        key=f"ei_{item_ei_id}_cat",
-                    )
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        ei_nova_und = st.text_input(
-                            "Unidade", value=ei_unidade, key=f"ei_{item_ei_id}_und"
+                    with st.container(border=True):
+                        ei_novo_nome = st.text_input(
+                            "Nome do produto", value=ei_nome, key=f"ei_{item_ei_id}_nome"
                         )
-                    with col_b:
-                        ei_novo_minimo = st.number_input(
-                            "Mínimo", min_value=0, value=ei_minimo, key=f"ei_{item_ei_id}_minimo"
+                        ei_nova_cat = st.selectbox(
+                            "Categoria",
+                            list(cat_opcoes_ei.keys()),
+                            index=list(cat_opcoes_ei.values()).index(ei_cat_id),
+                            key=f"ei_{item_ei_id}_cat",
                         )
-                    col_c, col_d = st.columns(2)
-                    with col_c:
-                        ei_novo_ideal = st.number_input(
-                            "Ideal", min_value=0, value=ei_ideal, key=f"ei_{item_ei_id}_ideal"
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            ei_nova_und = st.text_input(
+                                "Unidade", value=ei_unidade, key=f"ei_{item_ei_id}_und"
+                            )
+                        with col_b:
+                            ei_novo_minimo = st.number_input(
+                                "Mínimo", min_value=0, value=ei_minimo, key=f"ei_{item_ei_id}_minimo"
+                            )
+                        col_c, col_d = st.columns(2)
+                        with col_c:
+                            ei_novo_ideal = st.number_input(
+                                "Ideal", min_value=0, value=ei_ideal, key=f"ei_{item_ei_id}_ideal"
+                            )
+                        with col_d:
+                            ei_novo_ativo = st.checkbox(
+                                "Ativo", value=ei_ativo, key=f"ei_{item_ei_id}_ativo"
+                            )
+                        ei_fornecedores = st.multiselect(
+                            "Fornecedores",
+                            options=list(forn_map_ei.keys()),
+                            default=ei_forn_atuais,
+                            placeholder="Selecione os fornecedores...",
+                            key=f"ei_{item_ei_id}_fornecedores",
                         )
-                    with col_d:
-                        ei_novo_ativo = st.checkbox(
-                            "Ativo", value=ei_ativo, key=f"ei_{item_ei_id}_ativo"
+                        ei_nova_obs = st.text_area(
+                            "Observações", value=ei_obs, height=68, key=f"ei_{item_ei_id}_obs"
                         )
-                    ei_nova_obs = st.text_area(
-                        "Observações", value=ei_obs, height=68, key=f"ei_{item_ei_id}_obs"
-                    )
 
-                    if st.button(
-                        "Salvar alterações", key="btn_ei_salvar", type="primary", use_container_width=True
-                    ):
-                        if not ei_novo_nome.strip():
-                            st.error("Nome não pode ficar em branco.")
-                        elif ei_novo_ideal < ei_novo_minimo:
-                            st.error("Ideal não pode ser menor que Mínimo.")
-                        else:
-                            try:
-                                with st.spinner("Salvando..."):
-                                    with SessionLocal() as session:
-                                        estoque_service.update_item_completo(
-                                            session, item_ei_id,
-                                            cat_opcoes_ei[ei_nova_cat],
-                                            ei_novo_nome, ei_nova_und,
-                                            ei_novo_minimo, ei_novo_ideal,
-                                            ei_nova_obs or None, ei_novo_ativo,
-                                        )
-                                for k in [k for k in st.session_state if k.startswith(f"ei_{item_ei_id}_")]:
-                                    st.session_state.pop(k)
-                                st.session_state["_fb"] = ("success", f"Item **{ei_novo_nome}** atualizado.")
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e))
+                        if st.button(
+                            "Salvar alterações", key="btn_ei_salvar", type="primary", use_container_width=True
+                        ):
+                            if not ei_novo_nome.strip():
+                                st.error("Nome não pode ficar em branco.")
+                            elif ei_novo_ideal < ei_novo_minimo:
+                                st.error("Ideal não pode ser menor que Mínimo.")
+                            else:
+                                try:
+                                    with st.spinner("Salvando..."):
+                                        with SessionLocal() as session:
+                                            estoque_service.update_item_completo(
+                                                session, item_ei_id,
+                                                cat_opcoes_ei[ei_nova_cat],
+                                                ei_novo_nome, ei_nova_und,
+                                                ei_novo_minimo, ei_novo_ideal,
+                                                ei_nova_obs or None, ei_novo_ativo,
+                                            )
+                                            estoque_service.atualizar_fornecedores_item(
+                                                session, item_ei_id,
+                                                [forn_map_ei[n] for n in ei_fornecedores],
+                                            )
+                                    for k in [k for k in st.session_state if k.startswith(f"ei_{item_ei_id}_")]:
+                                        st.session_state.pop(k)
+                                    st.session_state["_fb"] = ("success", f"Item **{ei_novo_nome}** atualizado.")
+                                    st.rerun()
+                                except ValueError as e:
+                                    st.error(str(e))
 
                     st.divider()
                     if st.button(
@@ -351,6 +395,7 @@ with tab_editar:
                             if st.button("Cancelar", key=f"btn_cancel_item_{item_ei_id}"):
                                 st.session_state.pop(f"confirm_del_item_{item_ei_id}", None)
                                 st.rerun()
+
 
     # ══════════════════════════════════════════════════════════════════════════
     # Sub-tab: Fornecedores
@@ -405,29 +450,30 @@ with tab_editar:
         with col_nf:
             section_title("Cadastrar novo fornecedor")
 
-            nf_nome = st.text_input("Nome", key="nf_nome")
-            nf_contato = st.text_input("Contato", key="nf_contato")
-            nf_tel = st.text_input("Telefone", key="nf_tel")
-            nf_email = st.text_input("E-mail", key="nf_email")
-            nf_pref = st.checkbox("Preferencial", key="nf_pref")
-            nf_ativo = st.checkbox("Ativo", value=True, key="nf_ativo")
+            with st.container(border=True):
+                nf_nome = st.text_input("Nome", key="nf_nome")
+                nf_contato = st.text_input("Contato", key="nf_contato")
+                nf_tel = st.text_input("Telefone", key="nf_tel")
+                nf_email = st.text_input("E-mail", key="nf_email")
+                nf_pref = st.checkbox("Preferencial", key="nf_pref")
+                nf_ativo = st.checkbox("Ativo", value=True, key="nf_ativo")
 
-            if st.button("Cadastrar", key="btn_nf_cadastrar", type="primary", use_container_width=True):
-                if not nf_nome.strip():
-                    st.error("Nome não pode ficar em branco.")
-                else:
-                    try:
-                        with st.spinner("Salvando..."):
-                            with SessionLocal() as session:
-                                forn_criado = fornecedor_service.create_fornecedor(
-                                    session, nf_nome, nf_contato, nf_tel, nf_email, nf_pref, nf_ativo
-                                )
-                        for k in ["nf_nome", "nf_contato", "nf_tel", "nf_email", "nf_pref", "nf_ativo"]:
-                            st.session_state.pop(k, None)
-                        st.session_state["_fb"] = ("success", f"Fornecedor **{forn_criado.nome}** cadastrado.")
-                        st.rerun()
-                    except ValueError as e:
-                        st.error(str(e))
+                if st.button("Cadastrar", key="btn_nf_cadastrar", type="primary", use_container_width=True):
+                    if not nf_nome.strip():
+                        st.error("Nome não pode ficar em branco.")
+                    else:
+                        try:
+                            with st.spinner("Salvando..."):
+                                with SessionLocal() as session:
+                                    forn_criado = fornecedor_service.create_fornecedor(
+                                        session, nf_nome, nf_contato, nf_tel, nf_email, nf_pref, nf_ativo
+                                    )
+                            for k in ["nf_nome", "nf_contato", "nf_tel", "nf_email", "nf_pref", "nf_ativo"]:
+                                st.session_state.pop(k, None)
+                            st.session_state["_fb"] = ("success", f"Fornecedor **{forn_criado.nome}** cadastrado.")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
 
         # ── Editar / Remover fornecedor ───────────────────────────────────────
         with col_ef:
@@ -443,44 +489,45 @@ with tab_editar:
                 forn_sel = forn_map[forn_sel_nome]
                 forn_sel_id = forn_sel["id"]
 
-                ef_nome = st.text_input(
-                    "Nome", value=forn_sel["nome"], key=f"ef_{forn_sel_id}_nome"
-                )
-                ef_contato = st.text_input(
-                    "Contato", value=forn_sel["contato_nome"], key=f"ef_{forn_sel_id}_contato"
-                )
-                ef_tel = st.text_input(
-                    "Telefone", value=forn_sel["telefone"], key=f"ef_{forn_sel_id}_tel"
-                )
-                ef_email = st.text_input(
-                    "E-mail", value=forn_sel["email"], key=f"ef_{forn_sel_id}_email"
-                )
-                ef_pref = st.checkbox(
-                    "Preferencial", value=forn_sel["preferencial"], key=f"ef_{forn_sel_id}_pref"
-                )
-                ef_ativo = st.checkbox(
-                    "Ativo", value=forn_sel["ativo"], key=f"ef_{forn_sel_id}_ativo"
-                )
+                with st.container(border=True):
+                    ef_nome = st.text_input(
+                        "Nome", value=forn_sel["nome"], key=f"ef_{forn_sel_id}_nome"
+                    )
+                    ef_contato = st.text_input(
+                        "Contato", value=forn_sel["contato_nome"], key=f"ef_{forn_sel_id}_contato"
+                    )
+                    ef_tel = st.text_input(
+                        "Telefone", value=forn_sel["telefone"], key=f"ef_{forn_sel_id}_tel"
+                    )
+                    ef_email = st.text_input(
+                        "E-mail", value=forn_sel["email"], key=f"ef_{forn_sel_id}_email"
+                    )
+                    ef_pref = st.checkbox(
+                        "Preferencial", value=forn_sel["preferencial"], key=f"ef_{forn_sel_id}_pref"
+                    )
+                    ef_ativo = st.checkbox(
+                        "Ativo", value=forn_sel["ativo"], key=f"ef_{forn_sel_id}_ativo"
+                    )
 
-                if st.button(
-                    "Salvar alterações", key="btn_ef_salvar", type="primary", use_container_width=True
-                ):
-                    if not ef_nome.strip():
-                        st.error("Nome não pode ficar em branco.")
-                    else:
-                        try:
-                            with st.spinner("Salvando..."):
-                                with SessionLocal() as session:
-                                    fornecedor_service.update_fornecedor(
-                                        session, forn_sel_id,
-                                        ef_nome, ef_contato, ef_tel, ef_email, ef_pref, ef_ativo,
-                                    )
-                            for k in [k for k in st.session_state if k.startswith(f"ef_{forn_sel_id}_")]:
-                                st.session_state.pop(k)
-                            st.session_state["_fb"] = ("success", f"Fornecedor **{ef_nome}** atualizado.")
-                            st.rerun()
-                        except ValueError as e:
-                            st.error(str(e))
+                    if st.button(
+                        "Salvar alterações", key="btn_ef_salvar", type="primary", use_container_width=True
+                    ):
+                        if not ef_nome.strip():
+                            st.error("Nome não pode ficar em branco.")
+                        else:
+                            try:
+                                with st.spinner("Salvando..."):
+                                    with SessionLocal() as session:
+                                        fornecedor_service.update_fornecedor(
+                                            session, forn_sel_id,
+                                            ef_nome, ef_contato, ef_tel, ef_email, ef_pref, ef_ativo,
+                                        )
+                                for k in [k for k in st.session_state if k.startswith(f"ef_{forn_sel_id}_")]:
+                                    st.session_state.pop(k)
+                                st.session_state["_fb"] = ("success", f"Fornecedor **{ef_nome}** atualizado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
 
                 st.divider()
                 if st.button(
@@ -551,25 +598,26 @@ with tab_editar:
         with col_nc:
             section_title("Cadastrar nova categoria")
 
-            nc_nome = st.text_input("Nome da categoria", key="nc_nome")
-            nc_desc = st.text_input("Descrição (opcional)", key="nc_desc")
+            with st.container(border=True):
+                nc_nome = st.text_input("Nome da categoria", key="nc_nome")
+                nc_desc = st.text_input("Descrição (opcional)", key="nc_desc")
 
-            if st.button("Cadastrar", key="btn_nc_cadastrar", type="primary", use_container_width=True):
-                if not nc_nome.strip():
-                    st.error("Nome não pode ficar em branco.")
-                else:
-                    try:
-                        with st.spinner("Salvando..."):
-                            with SessionLocal() as session:
-                                cat_criada = estoque_service.create_categoria(
-                                    session, nc_nome, nc_desc or None
-                                )
-                        for k in ["nc_nome", "nc_desc"]:
-                            st.session_state.pop(k, None)
-                        st.session_state["_fb"] = ("success", f"Categoria **{cat_criada.nome}** cadastrada.")
-                        st.rerun()
-                    except ValueError as e:
-                        st.error(str(e))
+                if st.button("Cadastrar", key="btn_nc_cadastrar", type="primary", use_container_width=True):
+                    if not nc_nome.strip():
+                        st.error("Nome não pode ficar em branco.")
+                    else:
+                        try:
+                            with st.spinner("Salvando..."):
+                                with SessionLocal() as session:
+                                    cat_criada = estoque_service.create_categoria(
+                                        session, nc_nome, nc_desc or None
+                                    )
+                            for k in ["nc_nome", "nc_desc"]:
+                                st.session_state.pop(k, None)
+                            st.session_state["_fb"] = ("success", f"Categoria **{cat_criada.nome}** cadastrada.")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
 
         # ── Editar / Remover categoria ────────────────────────────────────────
         with col_ec:
@@ -585,31 +633,32 @@ with tab_editar:
                 cat_ec_sel = cat_map[cat_ec_sel_nome]
                 cat_ec_id = cat_ec_sel["id"]
 
-                ec_nome = st.text_input(
-                    "Nome", value=cat_ec_sel["nome"], key=f"ec_{cat_ec_id}_nome"
-                )
-                ec_desc = st.text_input(
-                    "Descrição", value=cat_ec_sel["descricao"], key=f"ec_{cat_ec_id}_desc"
-                )
+                with st.container(border=True):
+                    ec_nome = st.text_input(
+                        "Nome", value=cat_ec_sel["nome"], key=f"ec_{cat_ec_id}_nome"
+                    )
+                    ec_desc = st.text_input(
+                        "Descrição", value=cat_ec_sel["descricao"], key=f"ec_{cat_ec_id}_desc"
+                    )
 
-                if st.button(
-                    "Salvar alterações", key="btn_ec_salvar", type="primary", use_container_width=True
-                ):
-                    if not ec_nome.strip():
-                        st.error("Nome não pode ficar em branco.")
-                    else:
-                        try:
-                            with st.spinner("Salvando..."):
-                                with SessionLocal() as session:
-                                    estoque_service.update_categoria(
-                                        session, cat_ec_id, ec_nome, ec_desc or None
-                                    )
-                            for k in [k for k in st.session_state if k.startswith(f"ec_{cat_ec_id}_")]:
-                                st.session_state.pop(k)
-                            st.session_state["_fb"] = ("success", f"Categoria **{ec_nome}** atualizada.")
-                            st.rerun()
-                        except ValueError as e:
-                            st.error(str(e))
+                    if st.button(
+                        "Salvar alterações", key="btn_ec_salvar", type="primary", use_container_width=True
+                    ):
+                        if not ec_nome.strip():
+                            st.error("Nome não pode ficar em branco.")
+                        else:
+                            try:
+                                with st.spinner("Salvando..."):
+                                    with SessionLocal() as session:
+                                        estoque_service.update_categoria(
+                                            session, cat_ec_id, ec_nome, ec_desc or None
+                                        )
+                                for k in [k for k in st.session_state if k.startswith(f"ec_{cat_ec_id}_")]:
+                                    st.session_state.pop(k)
+                                st.session_state["_fb"] = ("success", f"Categoria **{ec_nome}** atualizada.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
 
                 st.divider()
                 if st.button(

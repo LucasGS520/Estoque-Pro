@@ -90,10 +90,20 @@ def get_precos_por_item(session: Session, item_id: int) -> list[PrecoFornecedor]
     """Lista cotações ativas de um item da mais recente para a mais antiga."""
     return (
         session.query(PrecoFornecedor)
+        .options(joinedload(PrecoFornecedor.fornecedor))
         .filter_by(item_id=item_id, ativo=True)
         .order_by(PrecoFornecedor.data_cotacao.desc())
         .all()
     )
+
+
+def remover_preco(session: Session, preco_id: int) -> None:
+    """Remove permanentemente um registro de cotação de preço."""
+    preco = session.query(PrecoFornecedor).filter_by(id=preco_id).first()
+    if not preco:
+        raise ValueError(f"Registro de preço {preco_id} não encontrado")
+    session.delete(preco)
+    session.commit()
 
 
 def create_fornecedor(

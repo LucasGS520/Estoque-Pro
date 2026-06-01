@@ -9,11 +9,19 @@ import datetime
 
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, Float,
-    ForeignKey, Integer, Text, String, UniqueConstraint,
+    ForeignKey, Integer, Table, Text, String, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
 from core.database import Base
+
+# Tabela de junção para associação simples item ↔ fornecedor (sem preço/data).
+item_fornecedores = Table(
+    "item_fornecedores",
+    Base.metadata,
+    Column("item_id", Integer, ForeignKey("itens.id", ondelete="CASCADE"), primary_key=True),
+    Column("fornecedor_id", Integer, ForeignKey("fornecedores.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class Categoria(Base):
@@ -51,6 +59,9 @@ class Item(Base):
     precos = relationship("PrecoFornecedor", back_populates="item", cascade="all, delete-orphan")
     movimentacoes = relationship("Movimentacao", back_populates="item", cascade="all, delete-orphan")
     snapshots = relationship("SnapshotAnalise", back_populates="item", cascade="all, delete-orphan")
+    fornecedores_associados = relationship(
+        "Fornecedor", secondary=item_fornecedores, order_by="Fornecedor.nome"
+    )
 
 
 class Fornecedor(Base):

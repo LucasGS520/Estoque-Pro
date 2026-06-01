@@ -9,9 +9,9 @@ import datetime
 import unicodedata
 from typing import Optional
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
-from core.models import Categoria, Item, Movimentacao
+from core.models import Categoria, Fornecedor, Item, Movimentacao
 
 
 def _normalizar(texto: str) -> str:
@@ -129,6 +129,86 @@ def get_historico_movimentacoes(
     if tipo:
         q = q.filter(Movimentacao.tipo == tipo)
     return q.order_by(Movimentacao.criado_em.desc()).limit(limit).all()
+
+
+def get_tabela_mestre(
+    session: Session,
+    categoria_id: Optional[int] = None,
+    apenas_ativos: bool = True,
+) -> list[dict]:
+    """Retorna visão consolidada por item para a tabela mestre de visualização.
+
+    Cada dict contém campos de cadastro do item, última movimentação, lista de
+    fornecedores com preço ativo e status operacional calculado com as mesmas
+    regras do motor de análise.
+    """
+    q = (
+        session.query(Item)
+        .options(
+            joinedload(Item.categoria),
+            selectinload(Item.movimentacoes),
+            selectinload(Item.fornecedores_associados),
+        )
+    )
+    if apenas_ativos:
+        q = q.filter(Item.ativo == True)  # noqa: E712
+    if categoria_id is not None:
+        q = q.filter(Item.categoria_id == categoria_id)
+    itens = q.order_by(Item.categoria_id, Item.nome).all()
+
+    rows = []
+    for item in itens:
+        ultima_mov = max(item.movimentacoes, key=lambda m: m.criado_em, default=None)
+
+        nomes_forn = [f.nome for f in item.fornecedores_associados]
+
+        sem_limites = item.estoque_minimo == 0 and item.estoque_ideal == 0
+        if item.estoque_atual == 0 and not sem_limites:
+            status = "zerado"
+        elif sem_limites:
+            status = "sem_minimo"
+        elif item.estoque_atual <= item.estoque_minimo:
+            status = "comprar"
+        else:
+            status = "ok"
+
+        rows.append({
+            "id": item.id,
+            "categoria": item.categoria.nome,
+            "item": item.nome,
+            "unidade": item.unidade,
+            "atual": item.estoque_atual,
+            "minimo": item.estoque_minimo,
+            "ideal": item.estoque_ideal,
+            "status": status,
+            "ultima_mov_data": ultima_mov.criado_em if ultima_mov else None,
+            "ultima_mov_tipo": ultima_mov.tipo if ultima_mov else None,
+            "fornecedores": ", ".join(nomes_forn) if nomes_forn else "-",
+            "observacoes": item.observacoes or "",
+        })
+
+    return rows
+
+
+def atualizar_fornecedores_item(
+    session: Session,
+    item_id: int,
+    fornecedor_ids: list[int],
+) -> None:
+    """Substitui os fornecedores associados ao item pela lista de IDs fornecida."""
+    item = (
+        session.query(Item)
+        .options(selectinload(Item.fornecedores_associados))
+        .filter_by(id=item_id)
+        .first()
+    )
+    if not item:
+        raise ValueError(f"Item {item_id} não encontrado")
+    item.fornecedores_associados = (
+        session.query(Fornecedor).filter(Fornecedor.id.in_(fornecedor_ids)).all()
+        if fornecedor_ids else []
+    )
+    session.commit()
 
 
 def get_kpis_basicos(session: Session) -> dict:
