@@ -10,7 +10,7 @@ import pandas as pd
 
 from core.database import get_session_factory
 from core.ui import setup_page, page_header, section_title
-from services import estoque_service, fornecedor_service
+from services import estoque_service, fornecedor_service, calculos_service
 
 setup_page("Estoque", "📋")
 page_header("Estoque", subtitle="Consulta, movimentações e edição de itens, fornecedores e categorias.")
@@ -163,8 +163,9 @@ with tab_editar:
                     "Item": i.nome,
                     "Und.": i.unidade,
                     "Atual": i.estoque_atual,
-                    "Mínimo": i.estoque_minimo,
-                    "Ideal": i.estoque_ideal,
+                    "Mínimo Vigente": i.estoque_minimo_vigente,
+                    "Ideal Vigente": i.estoque_ideal_vigente,
+                    "Origem": i.origem_minimo or "—",
                     "Ativo": "Sim" if i.ativo else "Não",
                     "Obs.": i.observacoes or "",
                 }
@@ -234,11 +235,13 @@ with tab_editar:
                         ni_und = st.text_input("Unidade", value="un", key="ni_und")
                     with col_b:
                         ni_atual = st.number_input("Estoque Atual", min_value=0, value=0, key="ni_atual")
-                    col_c, col_d = st.columns(2)
-                    with col_c:
-                        ni_minimo = st.number_input("Mínimo", min_value=0, value=0, key="ni_minimo")
-                    with col_d:
-                        ni_ideal = st.number_input("Ideal", min_value=0, value=0, key="ni_ideal")
+                    with st.expander("Valores manuais de estoque (opcional)"):
+                        st.caption("Deixe em 0 para usar o cálculo automático após a próxima revisão mensal.")
+                        col_c, col_d = st.columns(2)
+                        with col_c:
+                            ni_minimo = st.number_input("Mínimo manual", min_value=0, value=0, key="ni_minimo")
+                        with col_d:
+                            ni_ideal = st.number_input("Ideal manual", min_value=0, value=0, key="ni_ideal")
                     with SessionLocal() as session:
                         forn_opts_ni = fornecedor_service.get_all_fornecedores(session)
                         forn_map_ni = {f.nome: f.id for f in forn_opts_ni}
@@ -255,15 +258,19 @@ with tab_editar:
                     if st.button("Cadastrar", key="btn_ni_cadastrar", type="primary", use_container_width=True):
                         if not ni_nome.strip():
                             st.error("Nome não pode ficar em branco.")
-                        elif ni_ideal < ni_minimo:
-                            st.error("Ideal não pode ser menor que Mínimo.")
+                        elif ni_minimo > 0 and ni_ideal > 0 and ni_ideal < ni_minimo:
+                            st.error("Ideal manual não pode ser menor que Mínimo manual.")
                         else:
                             try:
                                 with st.spinner("Salvando..."):
                                     with SessionLocal() as session:
                                         item_criado = estoque_service.create_item(
                                             session, cat_opcoes_ni[ni_cat], ni_nome, ni_und,
-                                            ni_atual, ni_minimo, ni_ideal, ni_obs or None, ni_ativo,
+                                            ni_atual,
+                                            estoque_minimo_manual=ni_minimo if ni_minimo > 0 else None,
+                                            estoque_ideal_manual=ni_ideal if ni_ideal > 0 else None,
+                                            observacoes=ni_obs or None,
+                                            ativo=ni_ativo,
                                         )
                                         if ni_fornecedores:
                                             estoque_service.atualizar_fornecedores_item(
@@ -314,13 +321,23 @@ with tab_editar:
                         ei_nome = _i.nome
                         ei_cat_id = _i.categoria_id
                         ei_unidade = _i.unidade
-                        ei_minimo = _i.estoque_minimo
-                        ei_ideal = _i.estoque_ideal
                         ei_forn_atuais = [f.nome for f in _i.fornecedores_associados]
                         ei_obs = _i.observacoes or ""
                         ei_ativo = _i.ativo
+                        ei_minimo_vigente = _i.estoque_minimo_vigente
+                        ei_ideal_vigente = _i.estoque_ideal_vigente
+                        ei_minimo_sugerido = _i.estoque_minimo_sugerido
+                        ei_ideal_sugerido = _i.estoque_ideal_sugerido
+                        ei_minimo_manual = _i.estoque_minimo_manual
+                        ei_ideal_manual = _i.estoque_ideal_manual
+                        ei_origem_minimo = _i.origem_minimo
                         forn_opts_ei = fornecedor_service.get_all_fornecedores(session)
                         forn_map_ei = {f.nome: f.id for f in forn_opts_ei}
+                        # Última revisão para exibir badge de confiabilidade
+                        _ultimas_revs = calculos_service.get_revisoes_item(session, item_ei_id, limit=1)
+                        ei_ultima_rev = _ultimas_revs[0] if _ultimas_revs else None
+                        ei_status_conf = ei_ultima_rev.status_confiabilidade if ei_ultima_rev else None
+                        ei_ultima_rev_data = ei_ultima_rev.criado_em if ei_ultima_rev else None
 
                     with st.container(border=True):
                         ei_novo_nome = st.text_input(
@@ -338,15 +355,6 @@ with tab_editar:
                                 "Unidade", value=ei_unidade, key=f"ei_{item_ei_id}_und"
                             )
                         with col_b:
-                            ei_novo_minimo = st.number_input(
-                                "Mínimo", min_value=0, value=ei_minimo, key=f"ei_{item_ei_id}_minimo"
-                            )
-                        col_c, col_d = st.columns(2)
-                        with col_c:
-                            ei_novo_ideal = st.number_input(
-                                "Ideal", min_value=0, value=ei_ideal, key=f"ei_{item_ei_id}_ideal"
-                            )
-                        with col_d:
                             ei_novo_ativo = st.checkbox(
                                 "Ativo", value=ei_ativo, key=f"ei_{item_ei_id}_ativo"
                             )
@@ -366,8 +374,6 @@ with tab_editar:
                         ):
                             if not ei_novo_nome.strip():
                                 st.error("Nome não pode ficar em branco.")
-                            elif ei_novo_ideal < ei_novo_minimo:
-                                st.error("Ideal não pode ser menor que Mínimo.")
                             else:
                                 try:
                                     with st.spinner("Salvando..."):
@@ -376,7 +382,6 @@ with tab_editar:
                                                 session, item_ei_id,
                                                 cat_opcoes_ei[ei_nova_cat],
                                                 ei_novo_nome, ei_nova_und,
-                                                ei_novo_minimo, ei_novo_ideal,
                                                 ei_nova_obs or None, ei_novo_ativo,
                                             )
                                             estoque_service.atualizar_fornecedores_item(
@@ -389,6 +394,108 @@ with tab_editar:
                                     st.rerun()
                                 except ValueError as e:
                                     st.error(str(e))
+
+                    # ── Seção: Mínimo e Ideal ────────────────────────────────
+                    with st.container(border=True):
+                        st.markdown("**Estoque Mínimo e Ideal**")
+
+                        col_v1, col_v2 = st.columns(2)
+                        with col_v1:
+                            origem_label = ei_origem_minimo or "Não definido"
+                            st.metric("Mínimo vigente", ei_minimo_vigente, help=f"Origem: {origem_label}")
+                        with col_v2:
+                            st.metric("Ideal vigente", ei_ideal_vigente)
+
+                        col_s1, col_s2 = st.columns(2)
+                        with col_s1:
+                            st.caption(f"Automático: {ei_minimo_sugerido if ei_minimo_sugerido is not None else '—'}")
+                        with col_s2:
+                            st.caption(f"Automático: {ei_ideal_sugerido if ei_ideal_sugerido is not None else '—'}")
+
+                        col_s3, col_s4 = st.columns(2)
+                        with col_s3:
+                            st.caption(f"Manual: {ei_minimo_manual if ei_minimo_manual is not None else '—'}")
+                        with col_s4:
+                            st.caption(f"Manual: {ei_ideal_manual if ei_ideal_manual is not None else '—'}")
+
+                        # Badge de confiabilidade da última revisão
+                        _conf_cfg = {
+                            "ok":                   ("success", "✅ Cálculo confiável — 3 meses de dados"),
+                            "historico_recente":     ("warning", "🕐 Dados recentes — menos de 3 meses de histórico"),
+                            "irregular":             ("warning", "⚠️ Consumo irregular — cálculo aplicado com ressalva"),
+                            "sem_consumo_recente":   ("info",    "ℹ️ Sem saídas recentes — possível item obsoleto"),
+                            "sem_entradas_recentes": ("info",    "ℹ️ Sem entradas no período — intervalo não calculado"),
+                            "historico_insuficiente":("error",   "❌ Histórico insuficiente — aguardando movimentações"),
+                        }
+                        if ei_status_conf and ei_status_conf in _conf_cfg:
+                            _fn, _msg = _conf_cfg[ei_status_conf]
+                            getattr(st, _fn)(_msg)
+                            if ei_ultima_rev_data:
+                                st.caption(f"Última revisão: {ei_ultima_rev_data.strftime('%d/%m/%Y')}")
+                        elif ei_status_conf is None:
+                            st.caption("Nenhuma revisão automática registrada ainda.")
+
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.button("Definir valor manual", key=f"btn_def_manual_{item_ei_id}", use_container_width=True):
+                                st.session_state[f"show_manual_form_{item_ei_id}"] = True
+
+                        if ei_minimo_manual is not None:
+                            with col_btn2:
+                                if st.button("Remover manual", key=f"btn_rem_manual_{item_ei_id}", use_container_width=True):
+                                    st.session_state[f"confirm_rem_manual_{item_ei_id}"] = True
+
+                        if st.session_state.get(f"show_manual_form_{item_ei_id}"):
+                            with st.form(key=f"form_manual_{item_ei_id}"):
+                                st.markdown("**Definir valores manuais**")
+                                col_m1, col_m2 = st.columns(2)
+                                with col_m1:
+                                    novo_min = st.number_input(
+                                        "Mínimo manual", min_value=0,
+                                        value=ei_minimo_manual or ei_minimo_vigente,
+                                        key=f"manual_min_{item_ei_id}",
+                                    )
+                                with col_m2:
+                                    novo_ideal = st.number_input(
+                                        "Ideal manual", min_value=0,
+                                        value=ei_ideal_manual or ei_ideal_vigente,
+                                        key=f"manual_ideal_{item_ei_id}",
+                                    )
+                                col_fs, col_fc = st.columns(2)
+                                with col_fs:
+                                    submitted_manual = st.form_submit_button("Salvar manual", type="primary", use_container_width=True)
+                                with col_fc:
+                                    cancel_manual = st.form_submit_button("Cancelar", use_container_width=True)
+
+                                if submitted_manual:
+                                    if novo_ideal > 0 and novo_min > 0 and novo_ideal < novo_min:
+                                        st.error("Ideal não pode ser menor que Mínimo.")
+                                    else:
+                                        with SessionLocal() as session:
+                                            calculos_service.aplicar_minimo_ideal_manual(
+                                                session, item_ei_id, novo_min, novo_ideal
+                                            )
+                                        st.session_state.pop(f"show_manual_form_{item_ei_id}", None)
+                                        st.session_state["_fb"] = ("success", "Valores manuais definidos.")
+                                        st.rerun()
+                                if cancel_manual:
+                                    st.session_state.pop(f"show_manual_form_{item_ei_id}", None)
+                                    st.rerun()
+
+                        if st.session_state.get(f"confirm_rem_manual_{item_ei_id}"):
+                            st.warning("Remover valores manuais e voltar ao cálculo automático?")
+                            col_cr1, col_cr2 = st.columns(2)
+                            with col_cr1:
+                                if st.button("Confirmar", key=f"btn_confirm_rem_manual_{item_ei_id}", type="primary", use_container_width=True):
+                                    with SessionLocal() as session:
+                                        calculos_service.remover_manual(session, item_ei_id)
+                                    st.session_state.pop(f"confirm_rem_manual_{item_ei_id}", None)
+                                    st.session_state["_fb"] = ("success", "Manual removido. Usando cálculo automático.")
+                                    st.rerun()
+                            with col_cr2:
+                                if st.button("Cancelar", key=f"btn_cancel_rem_manual_{item_ei_id}", use_container_width=True):
+                                    st.session_state.pop(f"confirm_rem_manual_{item_ei_id}", None)
+                                    st.rerun()
 
                     st.divider()
                     if st.button(

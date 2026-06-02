@@ -4,9 +4,11 @@ Configura a aplicação, inicializa o banco local, garante as pastas
 operacionais e registra a navegação manual usada pelas páginas.
 """
 
+import datetime
+
 import streamlit as st
 
-from core.database import init_db
+from core.database import init_db, get_session_factory
 from core.config import EXPORTS_DIR, UPLOADS_DIR
 from core.ui import _CSS, _LOGO
 
@@ -22,6 +24,24 @@ st.set_page_config(
 init_db()
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Auto-trigger: revisão mensal na primeira abertura de cada mês ─────────────
+_hoje = datetime.date.today()
+_revisao_key = f"revisao_executada_{_hoje.year}_{_hoje.month}"
+if not st.session_state.get(_revisao_key):
+    from services.calculos_service import executar_revisao_mensal, get_ultima_revisao_global
+    SessionLocal = get_session_factory()
+    with SessionLocal() as _sess:
+        _ultima = get_ultima_revisao_global(_sess)
+        _ja_rodou = (
+            _ultima is not None
+            and _ultima.year == _hoje.year
+            and _ultima.month == _hoje.month
+        )
+        if not _ja_rodou:
+            executar_revisao_mensal(_sess)
+            st.toast("Revisão mensal de estoque executada automaticamente.", icon="📊")
+    st.session_state[_revisao_key] = True
 
 # ── CSS global ────────────────────────────────────────────────────────────────
 st.markdown(_CSS, unsafe_allow_html=True)

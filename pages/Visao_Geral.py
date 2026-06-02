@@ -33,8 +33,8 @@ records = [
         nome=i.nome,
         categoria=i.categoria.nome,
         qtd_atual=i.estoque_atual,
-        estoque_minimo=i.estoque_minimo,
-        estoque_ideal=i.estoque_ideal,
+        estoque_minimo=i.estoque_minimo_vigente,
+        estoque_ideal=i.estoque_ideal_vigente,
     )
     for i in itens
 ]
