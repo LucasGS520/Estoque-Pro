@@ -1,7 +1,7 @@
 """ Dashboard de visão geral do estoque.
 
-Mostra KPIs de cadastro, último snapshot de compras, distribuição por categoria
-e itens críticos que exigem atenção operacional.
+Monitora a situação operacional atual calculando status diretamente dos
+saldos dos itens, sem depender de snapshots de análise de compras.
 """
 
 import streamlit as st
@@ -9,117 +9,105 @@ import plotly.express as px
 import pandas as pd
 
 from core.database import get_session_factory
-from core.engine import ItemStatus
-from core.ui import setup_page, page_header, section_title, empty_state, fmt_brl, apply_plotly_theme
-from services.estoque_service import get_kpis_basicos
-from services.compras_service import get_latest_snapshot, run_analysis
+from core.engine import ItemRecord, ItemStatus, StockAnalyzer
+from core.ui import setup_page, page_header, section_title, empty_state, apply_plotly_theme
+from services.estoque_service import get_all_itens
 
 setup_page("Visão Geral", "📊")
-page_header("Visão Geral", subtitle="Indicadores gerais e alertas de estoque.")
+page_header("Visão Geral", subtitle="Indicadores gerais e alertas operacionais de estoque.")
 
 SessionLocal = get_session_factory()
 
-# ── KPIs de base ──────────────────────────────────────────────────────────────
+# ── Cálculo live de status ────────────────────────────────────────────────────
 with SessionLocal() as session:
-    # KPIs de cadastro e snapshot mais recente são a base de toda a tela.
-    kpis = get_kpis_basicos(session)
-    snapshots = get_latest_snapshot(session)
+    itens = get_all_itens(session)
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total de Itens", kpis["total_itens"])
-col2.metric("Com Limites Definidos", kpis["itens_com_minimo"])
-col3.metric("Sem Limites Definidos", kpis["itens_sem_minimo_definido"])
+if not itens:
+    empty_state("📦", "Nenhum item cadastrado", "Cadastre itens na aba Estoque para começar.")
+    st.stop()
 
-if snapshots:
-    comprar = sum(1 for s in snapshots if s.status in ("comprar", "zerado"))
-    valor_total = sum(s.valor_estimado or 0 for s in snapshots)
-    col4.metric("Itens p/ Comprar", comprar)
-    st.metric("Valor Total Estimado", fmt_brl(valor_total))
-else:
-    col4.metric("Itens p/ Comprar", "—")
+analyzer = StockAnalyzer()
+records = [
+    ItemRecord(
+        item_id=i.id,
+        nome=i.nome,
+        categoria=i.categoria.nome,
+        qtd_atual=i.estoque_atual,
+        estoque_minimo=i.estoque_minimo,
+        estoque_ideal=i.estoque_ideal,
+    )
+    for i in itens
+]
+results = analyzer.run(records)
+sumario = analyzer.summary(results)
+
+# ── KPIs ──────────────────────────────────────────────────────────────────────
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Total de Itens", sumario.total_itens)
+col2.metric("Com Limites", sumario.total_itens - sumario.itens_sem_minimo)
+col3.metric("Sem Limites", sumario.itens_sem_minimo)
+col4.metric("A Comprar", sumario.itens_comprar)
+col5.metric("Zerados", sumario.itens_zerados)
 
 st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-
-# ── Estado vazio ──────────────────────────────────────────────────────────────
-if not snapshots:
-    empty_state(
-        "🛒",
-        "Nenhuma análise disponível",
-        "Vá até Compras e clique em Rodar Análise para gerar os dados.",
-    )
-    st.stop()
 
 # ── Gráfico por categoria ─────────────────────────────────────────────────────
 section_title("Status por Categoria")
 
-with SessionLocal() as session:
-    from core.models import Item, Categoria
-    # O snapshot guarda item_id; o mapa recupera a categoria atual para o gráfico.
-    itens_map = {
-        i.id: i.categoria.nome
-        for i in session.query(Item).all()
-    }
-
-rows = [
-    {"categoria": itens_map.get(s.item_id, "?"), "status": s.status}
-    for s in snapshots
-]
-df = pd.DataFrame(rows)
-df_agg = df.groupby(["categoria", "status"]).size().reset_index(name="count")
-
-status_cores = {
+_STATUS_CORES = {
     "comprar":             "#E10600",
     "zerado":              "#F59E0B",
-    "sem_minimo_definido": "#737373",
+    "sem_minimo_definido": "#9CA3AF",
     "ok":                  "#16A34A",
 }
-status_labels = {
+_STATUS_LABELS = {
     "comprar":             "Comprar",
     "zerado":              "Zerado",
-    "sem_minimo_definido": "Sem Mínimo",
+    "sem_minimo_definido": "Sem Limite",
     "ok":                  "OK",
 }
-df_agg["status_label"] = df_agg["status"].map(status_labels).fillna(df_agg["status"])
+
+rows_chart = [{"categoria": r.categoria, "status": r.status.value} for r in results]
+df_chart = pd.DataFrame(rows_chart)
+df_agg = df_chart.groupby(["categoria", "status"]).size().reset_index(name="count")
+df_agg["status_label"] = df_agg["status"].map(_STATUS_LABELS).fillna(df_agg["status"])
 
 fig = px.bar(
     df_agg,
     x="categoria",
     y="count",
     color="status",
-    color_discrete_map=status_cores,
+    color_discrete_map=_STATUS_CORES,
     barmode="stack",
     labels={"count": "Qtd. Itens", "categoria": "Categoria", "status": "Status"},
     title="Distribuição de Status por Categoria",
+    custom_data=["status_label"],
 )
+fig.update_traces(hovertemplate="%{customdata[0]}: %{y}<extra></extra>")
 apply_plotly_theme(fig)
 st.plotly_chart(fig, use_container_width=True)
 
 # ── Itens críticos ────────────────────────────────────────────────────────────
-criticos = [s for s in snapshots if s.status in ("comprar", "zerado")]
+criticos = [r for r in results if r.status in (ItemStatus.COMPRAR, ItemStatus.ZERADO)]
 
 st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 section_title(f"Itens Críticos — {len(criticos)} item(ns) para atenção")
 
 if criticos:
-    rows_crit = []
-    with SessionLocal() as session:
-        from core.models import Item
-        # Limita a prévia do dashboard; a lista completa fica na tela Compras.
-        for s in criticos[:20]:
-            item = session.query(Item).filter_by(id=s.item_id).first()
-            if item:
-                rows_crit.append({
-                    "Item": item.nome,
-                    "Categoria": item.categoria.nome,
-                    "Status": s.status,
-                    "Atual": item.estoque_atual,
-                    "Mínimo": item.estoque_minimo,
-                    "Comprar": s.quantidade_recomendar,
-                    "Fornecedor": (s.fornecedor_sugerido.nome if s.fornecedor_sugerido else "—"),
-                    "Valor Est.": (fmt_brl(s.valor_estimado) if s.valor_estimado else "—"),
-                })
+    rows_crit = [
+        {
+            "Item": r.nome,
+            "Categoria": r.categoria,
+            "Status": _STATUS_LABELS.get(r.status.value, r.status.value),
+            "Atual": r.qtd_atual,
+            "Mínimo": r.estoque_minimo,
+            "Comprar": r.quantidade_recomendar,
+        }
+        for r in criticos[:20]
+    ]
     st.dataframe(pd.DataFrame(rows_crit), use_container_width=True, hide_index=True)
     if len(criticos) > 20:
         st.caption(f"Exibindo 20 de {len(criticos)} itens críticos — ver lista completa em **Compras**.")
+    st.caption("Para fornecedores sugeridos e valores estimados, rode a análise em **Compras**.")
 else:
     st.success("Nenhum item crítico no momento.", icon="✅")

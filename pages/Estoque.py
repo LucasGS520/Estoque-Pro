@@ -88,9 +88,13 @@ with tab_movimentacao:
     with SessionLocal() as session:
         itens_mov = estoque_service.get_all_itens(session, categoria_id=cat_opcoes_mov[cat_mov])
         item_opcoes_mov = {f"{i.nome} (atual: {i.estoque_atual})": i.id for i in itens_mov}
+        item_estoque_map = {i.id: (i.estoque_atual, i.unidade) for i in itens_mov}
 
     item_mov_sel = st.selectbox("Item", list(item_opcoes_mov.keys()), key="mov_item")
     item_mov_id = item_opcoes_mov[item_mov_sel]
+
+    estoque_disp, unidade_disp = item_estoque_map.get(item_mov_id, (0, "un"))
+    st.info(f"Estoque atual: **{estoque_disp} {unidade_disp}**")
 
     section_title("Dados da movimentação")
     col1, col2 = st.columns(2)
@@ -98,27 +102,49 @@ with tab_movimentacao:
         tipo_mov = st.selectbox("Tipo", ["entrada", "saida"], key="mov_tipo")
     with col2:
         qtd_mov = st.number_input("Quantidade", min_value=1, value=1, key="mov_qtd")
+
+    setor_mov_id = None
+    if tipo_mov == "saida":
+        with SessionLocal() as session:
+            setores_mov = estoque_service.get_setores(session)
+            setor_opcoes_mov = {s.nome: s.id for s in setores_mov}
+
+        if not setor_opcoes_mov:
+            st.warning("Nenhum setor cadastrado. Cadastre um setor na aba Editar > Setores antes de registrar saídas.")
+        else:
+            setor_sel_mov = st.selectbox("Setor *", list(setor_opcoes_mov.keys()), key="mov_setor")
+            setor_mov_id = setor_opcoes_mov[setor_sel_mov]
+
     motivo_mov = st.text_input("Motivo (opcional)", key="mov_motivo")
-    operador_mov = st.text_input("Operador (opcional)", key="mov_operador")
+    retirado_por_mov = st.text_input("Retirado por (opcional)", key="mov_retirado_por")
 
     if st.button("Registrar movimentação", key="btn_mov_registrar", type="primary", use_container_width=True):
-        with st.spinner("Registrando..."):
-            with SessionLocal() as session:
-                item_upd = estoque_service.registrar_movimentacao(
-                    session, item_mov_id, tipo_mov, qtd_mov, motivo_mov or None, operador_mov or None
+        if tipo_mov == "saida" and setor_mov_id is None:
+            st.error("Cadastre e selecione um setor para registrar uma saída.")
+        else:
+            try:
+                with st.spinner("Registrando..."):
+                    with SessionLocal() as session:
+                        item_upd = estoque_service.registrar_movimentacao(
+                            session, item_mov_id, tipo_mov, qtd_mov,
+                            motivo_mov or None,
+                            retirado_por=retirado_por_mov or None,
+                            setor_id=setor_mov_id,
+                        )
+                # Limpa campos controlados para evitar reaplicar a mesma movimentação após o rerun.
+                for k in ["mov_tipo", "mov_qtd", "mov_motivo", "mov_retirado_por", "mov_setor"]:
+                    st.session_state.pop(k, None)
+                st.session_state["_fb"] = (
+                    "success",
+                    f"Movimentação registrada. Novo estoque de **{item_upd.nome}**: {item_upd.estoque_atual} {item_upd.unidade}"
                 )
-        # Limpa campos controlados para evitar reaplicar a mesma movimentação após o rerun.
-        for k in ["mov_tipo", "mov_qtd", "mov_motivo", "mov_operador"]:
-            st.session_state.pop(k, None)
-        st.session_state["_fb"] = (
-            "success",
-            f"Movimentação registrada. Novo estoque de **{item_upd.nome}**: {item_upd.estoque_atual}"
-        )
-        st.rerun()
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
 
 # ── Tab 3: Editar ─────────────────────────────────────────────────────────────
 with tab_editar:
-    sub_itens, sub_forn, sub_cat = st.tabs(["Itens", "Fornecedores", "Categorias"])
+    sub_itens, sub_cat, sub_setores, sub_forn = st.tabs(["Itens", "Categorias", "Setores", "Fornecedores"])
 
     # ══════════════════════════════════════════════════════════════════════════
     # Sub-tab: Itens
@@ -691,3 +717,109 @@ with tab_editar:
                         if st.button("Cancelar", key=f"btn_cancel_cat_{cat_ec_id}"):
                             st.session_state.pop(f"confirm_del_cat_{cat_ec_id}", None)
                             st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Sub-tab: Setores
+    # ══════════════════════════════════════════════════════════════════════════
+    with sub_setores:
+        section_title("Setores cadastrados")
+
+        with SessionLocal() as session:
+            setores_all = estoque_service.get_setores(session, apenas_ativos=False)
+            df_set_rows = [
+                {
+                    "ID": s.id,
+                    "Nome": s.nome,
+                    "Descrição": s.descricao or "",
+                    "Ativo": "Sim" if s.ativo else "Não",
+                }
+                for s in setores_all
+            ]
+            setor_data = [
+                {"id": s.id, "nome": s.nome, "descricao": s.descricao or "", "ativo": s.ativo}
+                for s in setores_all
+            ]
+
+        if df_set_rows:
+            st.dataframe(pd.DataFrame(df_set_rows), use_container_width=True, hide_index=True)
+            st.caption(f"{len(df_set_rows)} setor(es) no total")
+        else:
+            st.info("Nenhum setor cadastrado.")
+
+        st.divider()
+        col_ns, _sep_set, col_es = st.columns([1, 0.04, 1])
+
+        with _sep_set:
+            st.markdown(
+                '<div style="width:2px; background:#dee2e6; height:400px; margin:0 auto;"></div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Cadastrar novo setor ──────────────────────────────────────────────
+        with col_ns:
+            section_title("Cadastrar novo setor")
+
+            with st.container(border=True):
+                ns_nome = st.text_input("Nome do setor", key="ns_nome")
+                ns_desc = st.text_input("Descrição (opcional)", key="ns_desc")
+
+                if st.button("Cadastrar", key="btn_ns_cadastrar", type="primary", use_container_width=True):
+                    if not ns_nome.strip():
+                        st.error("Nome não pode ficar em branco.")
+                    else:
+                        try:
+                            with st.spinner("Salvando..."):
+                                with SessionLocal() as session:
+                                    setor_criado = estoque_service.criar_setor(
+                                        session, ns_nome, ns_desc or None
+                                    )
+                            for k in ["ns_nome", "ns_desc"]:
+                                st.session_state.pop(k, None)
+                            st.session_state["_fb"] = ("success", f"Setor **{setor_criado.nome}** cadastrado.")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+
+        # ── Editar setor ──────────────────────────────────────────────────────
+        with col_es:
+            section_title("Editar setor")
+
+            if not setor_data:
+                st.info("Nenhum setor disponível para editar.")
+            else:
+                set_map = {s["nome"]: s for s in setor_data}
+                set_sel_nome = st.selectbox(
+                    "Selecionar setor", list(set_map.keys()), key="set_ed_sel"
+                )
+                set_sel = set_map[set_sel_nome]
+                set_sel_id = set_sel["id"]
+
+                with st.container(border=True):
+                    es_nome = st.text_input(
+                        "Nome", value=set_sel["nome"], key=f"es_{set_sel_id}_nome"
+                    )
+                    es_desc = st.text_input(
+                        "Descrição", value=set_sel["descricao"], key=f"es_{set_sel_id}_desc"
+                    )
+                    es_ativo = st.checkbox(
+                        "Ativo", value=set_sel["ativo"], key=f"es_{set_sel_id}_ativo"
+                    )
+
+                    if st.button(
+                        "Salvar alterações", key="btn_es_salvar", type="primary", use_container_width=True
+                    ):
+                        if not es_nome.strip():
+                            st.error("Nome não pode ficar em branco.")
+                        else:
+                            try:
+                                with st.spinner("Salvando..."):
+                                    with SessionLocal() as session:
+                                        estoque_service.atualizar_setor(
+                                            session, set_sel_id, es_nome, es_desc or None, es_ativo
+                                        )
+                                for k in [k for k in st.session_state if k.startswith(f"es_{set_sel_id}_")]:
+                                    st.session_state.pop(k)
+                                st.session_state["_fb"] = ("success", f"Setor **{es_nome}** atualizado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))

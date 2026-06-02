@@ -102,6 +102,20 @@ class PrecoFornecedor(Base):
     fornecedor = relationship("Fornecedor", back_populates="precos")
 
 
+class Setor(Base):
+    """Setor ou área que realiza retiradas de estoque."""
+
+    __tablename__ = "setores"
+
+    id = Column(Integer, primary_key=True)
+    nome = Column(String(100), nullable=False, unique=True)
+    descricao = Column(Text)
+    ativo = Column(Boolean, default=True)
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    movimentacoes = relationship("Movimentacao", back_populates="setor")
+
+
 class Movimentacao(Base):
     """Registro histórico de entrada ou saída que altera o saldo do item."""
 
@@ -109,15 +123,18 @@ class Movimentacao(Base):
 
     id = Column(Integer, primary_key=True)
     item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
-    tipo = Column(String(20), nullable=False)  # "entrada", "saida", "ajuste", "inventario"
+    tipo = Column(String(20), nullable=False)  # "entrada", "saida"
     quantidade = Column(Integer, nullable=False)
     quantidade_anterior = Column(Integer, nullable=False)
     quantidade_nova = Column(Integer, nullable=False)
     motivo = Column(Text)
-    operador = Column(String(100))
+    operador = Column(String(100))  # legado — mantido para compatibilidade com registros anteriores
+    retirado_por = Column(String(200))
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
 
     item = relationship("Item", back_populates="movimentacoes")
+    setor = relationship("Setor", back_populates="movimentacoes")
 
 
 class SnapshotAnalise(Base):
