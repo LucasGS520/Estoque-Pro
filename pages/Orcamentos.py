@@ -1,3 +1,9 @@
+""" Tela de orçamento preliminar e cadastro de cotações.
+
+Usa a última análise de compras para consolidar valores por fornecedor e
+permite cadastrar novas cotações de preço para melhorar as estimativas.
+"""
+
 import datetime
 
 import streamlit as st
@@ -31,6 +37,7 @@ with tab_orcamento:
         st.stop()
 
     with SessionLocal() as session:
+        # Reexecuta a análise para manter orçamento e snapshots alinhados.
         results_raw, _ = run_analysis(session)
         orcamento = consolidar_orcamento(session, results_raw)
 
@@ -105,6 +112,7 @@ with tab_cotacao:
     st.info("Preencha o formulário para registrar o preço de um item para um fornecedor.", icon="ℹ️")
 
     with SessionLocal() as session:
+        # Carrega listas base para preencher selects dependentes do formulário.
         fornecedores = get_all_fornecedores(session)
         forn_opcoes = {f.nome: f.id for f in fornecedores}
         from core.models import Categoria

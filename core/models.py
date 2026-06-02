@@ -1,15 +1,32 @@
+""" Modelos ORM que representam o domínio de estoque e compras.
+
+Cada classe corresponde a uma tabela do SQLite e concentra os relacionamentos
+usados pelos serviços para navegar entre itens, fornecedores, cotações,
+movimentações, análises e logs de importação.
+"""
+
 import datetime
 
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, Float,
-    ForeignKey, Integer, Text, String, UniqueConstraint,
+    ForeignKey, Integer, Table, Text, String, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
 from core.database import Base
 
+# Tabela de junção para associação simples item ↔ fornecedor (sem preço/data).
+item_fornecedores = Table(
+    "item_fornecedores",
+    Base.metadata,
+    Column("item_id", Integer, ForeignKey("itens.id", ondelete="CASCADE"), primary_key=True),
+    Column("fornecedor_id", Integer, ForeignKey("fornecedores.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class Categoria(Base):
+    """Agrupa itens de estoque por família operacional."""
+
     __tablename__ = "categorias"
 
     id = Column(Integer, primary_key=True)
@@ -21,6 +38,8 @@ class Categoria(Base):
 
 
 class Item(Base):
+    """Produto ou material controlado no estoque."""
+
     __tablename__ = "itens"
 
     id = Column(Integer, primary_key=True)
@@ -40,9 +59,14 @@ class Item(Base):
     precos = relationship("PrecoFornecedor", back_populates="item", cascade="all, delete-orphan")
     movimentacoes = relationship("Movimentacao", back_populates="item", cascade="all, delete-orphan")
     snapshots = relationship("SnapshotAnalise", back_populates="item", cascade="all, delete-orphan")
+    fornecedores_associados = relationship(
+        "Fornecedor", secondary=item_fornecedores, order_by="Fornecedor.nome"
+    )
 
 
 class Fornecedor(Base):
+    """Fornecedor usado em cotações e sugestões de compra."""
+
     __tablename__ = "fornecedores"
 
     id = Column(Integer, primary_key=True)
@@ -58,6 +82,8 @@ class Fornecedor(Base):
 
 
 class PrecoFornecedor(Base):
+    """Cotação de preço de um item em um fornecedor específico."""
+
     __tablename__ = "precos_fornecedor"
     __table_args__ = (
         UniqueConstraint("item_id", "fornecedor_id", "data_cotacao", name="uq_item_forn_data"),
@@ -76,23 +102,44 @@ class PrecoFornecedor(Base):
     fornecedor = relationship("Fornecedor", back_populates="precos")
 
 
+class Setor(Base):
+    """Setor ou área que realiza retiradas de estoque."""
+
+    __tablename__ = "setores"
+
+    id = Column(Integer, primary_key=True)
+    nome = Column(String(100), nullable=False, unique=True)
+    descricao = Column(Text)
+    ativo = Column(Boolean, default=True)
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    movimentacoes = relationship("Movimentacao", back_populates="setor")
+
+
 class Movimentacao(Base):
+    """Registro histórico de entrada ou saída que altera o saldo do item."""
+
     __tablename__ = "movimentacoes"
 
     id = Column(Integer, primary_key=True)
     item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
-    tipo = Column(String(20), nullable=False)  # "entrada", "saida", "ajuste", "inventario"
+    tipo = Column(String(20), nullable=False)  # "entrada", "saida"
     quantidade = Column(Integer, nullable=False)
     quantidade_anterior = Column(Integer, nullable=False)
     quantidade_nova = Column(Integer, nullable=False)
     motivo = Column(Text)
-    operador = Column(String(100))
+    operador = Column(String(100))  # legado — mantido para compatibilidade com registros anteriores
+    retirado_por = Column(String(200))
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
 
     item = relationship("Item", back_populates="movimentacoes")
+    setor = relationship("Setor", back_populates="movimentacoes")
 
 
 class SnapshotAnalise(Base):
+    """Resultado persistido da última análise de reposição por item."""
+
     __tablename__ = "snapshots_analise"
 
     id = Column(Integer, primary_key=True)
@@ -108,6 +155,8 @@ class SnapshotAnalise(Base):
 
 
 class Importacao(Base):
+    """Log de uma execução de importação de planilhas externas."""
+
     __tablename__ = "importacoes"
 
     id = Column(Integer, primary_key=True)

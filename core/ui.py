@@ -1,3 +1,9 @@
+""" Utilitários visuais compartilhados pelas páginas Streamlit.
+
+Centraliza CSS, cabeçalhos, estados vazios, formatação monetária e tema Plotly
+para manter a identidade visual consistente entre telas.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -250,12 +256,16 @@ header[data-testid="stHeader"] {
 
 
 def setup_page(page_title: str, page_icon: str = "📦") -> None:
-    """Injeta CSS global. page_config, logo e sidebar são gerenciados pelo app.py."""
+    """Injeta o CSS global na página atual.
+
+    O `page_title` e `page_icon` permanecem na assinatura por clareza de uso,
+    mas a configuração global de página fica centralizada em `app.py`.
+    """
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
 def page_header(title: str, subtitle: str | None = None) -> None:
-    """Título principal de tela + subtítulo opcional."""
+    """Renderiza o título principal da tela e um subtítulo opcional."""
     st.title(title)
     if subtitle:
         st.markdown(
@@ -266,7 +276,7 @@ def page_header(title: str, subtitle: str | None = None) -> None:
 
 
 def section_title(text: str) -> None:
-    """Label de seção em caixa alta discreta."""
+    """Renderiza um rótulo discreto para separar seções de conteúdo."""
     st.markdown(
         f"<p style='font-size:11px;font-weight:600;text-transform:uppercase;"
         f"letter-spacing:0.08em;color:#737373;margin-bottom:4px;"
@@ -292,7 +302,7 @@ def status_badge(status: str) -> str:
 
 
 def empty_state(icon: str, title: str, description: str = "") -> None:
-    """Estado vazio centralizado com ícone, título e descrição."""
+    """Renderiza um estado vazio centralizado com ícone, título e descrição."""
     desc_html = (
         f"<p style='font-size:13px;color:#737373;margin:0;'>{description}</p>"
         if description else ""
@@ -311,12 +321,12 @@ def empty_state(icon: str, title: str, description: str = "") -> None:
 
 
 def fmt_brl(value: float) -> str:
-    """Formata valor como moeda brasileira: R$ 1.234,56."""
+    """Formata um número como moeda brasileira, por exemplo `R$ 1.234,56`."""
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def apply_plotly_theme(fig) -> None:
-    """Aplica paleta e estilo visual DFeB a uma figura Plotly."""
+    """Aplica paleta e estilo visual DFeB a uma figura Plotly recebida."""
     fig.update_layout(
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FAFAFA",

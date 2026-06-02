@@ -1,3 +1,9 @@
+""" Geração do documento Word de orçamento preliminar.
+
+Converte um `OrcamentoConsolidado` em `.docx`, agrupando itens por fornecedor,
+calculando subtotais e destacando itens sem cotação válida.
+"""
+
 from pathlib import Path
 
 from docx.shared import Pt
@@ -8,6 +14,7 @@ from services.orcamento_service import OrcamentoConsolidado
 
 
 def gerar_orcamento(orcamento: OrcamentoConsolidado) -> Path:
+    """Gera e salva o documento de orçamento preliminar de compras."""
     doc = criar_documento("Orçamento Preliminar de Compras")
 
     # Itens com preço — agrupados por fornecedor

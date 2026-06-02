@@ -1,3 +1,10 @@
+""" Serviços de fornecedores e cotações de preço.
+
+Reúne consultas e operações de manutenção de fornecedores. As funções que
+criam, atualizam, excluem ou adicionam preço persistem as alterações com
+`commit`; as consultas apenas leem dados.
+"""
+
 import datetime
 from typing import Optional
 
@@ -7,6 +14,7 @@ from core.models import Fornecedor, PrecoFornecedor, Item
 
 
 def get_all_fornecedores(session: Session, apenas_ativos: bool = True) -> list[Fornecedor]:
+    """Lista fornecedores, opcionalmente restringindo aos ativos."""
     q = session.query(Fornecedor)
     if apenas_ativos:
         q = q.filter(Fornecedor.ativo == True)  # noqa: E712
@@ -14,6 +22,7 @@ def get_all_fornecedores(session: Session, apenas_ativos: bool = True) -> list[F
 
 
 def get_fornecedor_by_id(session: Session, forn_id: int) -> Optional[Fornecedor]:
+    """Busca um fornecedor pelo ID ou retorna `None` quando não existir."""
     return session.query(Fornecedor).filter_by(id=forn_id).first()
 
 
@@ -25,6 +34,10 @@ def add_preco(
     data_cotacao: datetime.date,
     validade_dias: int = 30,
 ) -> PrecoFornecedor:
+    """Cadastra uma cotação para um item e fornecedor.
+
+    Persiste a cotação com `commit` e retorna o registro criado.
+    """
     preco = PrecoFornecedor(
         item_id=item_id,
         fornecedor_id=fornecedor_id,
@@ -41,8 +54,11 @@ def add_preco(
 
 def get_best_price(session: Session, item_id: int) -> Optional[PrecoFornecedor]:
     """
-    Retorna o melhor preço válido para um item.
-    Prioridade: fornecedor preferencial; em seguida, menor preço; em seguida, mais recente.
+    Retorna a melhor cotação válida para um item.
+
+    Considera apenas preços ativos, fornecedores ativos e cotações dentro da
+    validade. Se houver fornecedor preferencial válido, ele tem prioridade; em
+    seguida vence o menor preço.
     """
     hoje = datetime.date.today()
     precos = (
@@ -71,12 +87,23 @@ def get_best_price(session: Session, item_id: int) -> Optional[PrecoFornecedor]:
 
 
 def get_precos_por_item(session: Session, item_id: int) -> list[PrecoFornecedor]:
+    """Lista cotações ativas de um item da mais recente para a mais antiga."""
     return (
         session.query(PrecoFornecedor)
+        .options(joinedload(PrecoFornecedor.fornecedor))
         .filter_by(item_id=item_id, ativo=True)
         .order_by(PrecoFornecedor.data_cotacao.desc())
         .all()
     )
+
+
+def remover_preco(session: Session, preco_id: int) -> None:
+    """Remove permanentemente um registro de cotação de preço."""
+    preco = session.query(PrecoFornecedor).filter_by(id=preco_id).first()
+    if not preco:
+        raise ValueError(f"Registro de preço {preco_id} não encontrado")
+    session.delete(preco)
+    session.commit()
 
 
 def create_fornecedor(
@@ -88,6 +115,7 @@ def create_fornecedor(
     preferencial: bool = False,
     ativo: bool = True,
 ) -> Fornecedor:
+    """Cria fornecedor validando duplicidade exata de nome."""
     existente = session.query(Fornecedor).filter_by(nome=nome.strip()).first()
     if existente:
         raise ValueError(f"Já existe um fornecedor com o nome '{nome}'")
@@ -107,6 +135,7 @@ def create_fornecedor(
 
 
 def delete_fornecedor(session: Session, forn_id: int) -> None:
+    """Remove fornecedor, suas cotações e referências em snapshots."""
     forn = session.query(Fornecedor).filter_by(id=forn_id).first()
     if not forn:
         raise ValueError(f"Fornecedor {forn_id} não encontrado")
@@ -134,6 +163,7 @@ def update_fornecedor(
     preferencial: bool = False,
     ativo: bool = True,
 ) -> Fornecedor:
+    """Atualiza dados cadastrais de fornecedor existente."""
     forn = session.query(Fornecedor).filter_by(id=forn_id).first()
     if not forn:
         raise ValueError(f"Fornecedor {forn_id} não encontrado")

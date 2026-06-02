@@ -1,9 +1,17 @@
+""" Motor puro de análise de estoque.
+
+Recebe registros já carregados dos serviços, calcula status de reposição,
+quantidades recomendadas e resumos agregados. Não acessa banco nem Streamlit.
+"""
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
 
 class ItemStatus(str, Enum):
+    """Status possíveis para um item após a análise de reposição."""
+
     COMPRAR = "comprar"
     OK = "ok"
     SEM_MINIMO = "sem_minimo_definido"
@@ -12,6 +20,8 @@ class ItemStatus(str, Enum):
 
 @dataclass
 class ItemRecord:
+    """Entrada normalizada usada pelo motor de análise."""
+
     item_id: int
     nome: str
     categoria: str
@@ -25,6 +35,8 @@ class ItemRecord:
 
 @dataclass
 class AnalysisResult:
+    """Resultado calculado para um item analisado."""
+
     item_id: int
     nome: str
     categoria: str
@@ -43,6 +55,8 @@ class AnalysisResult:
 
 @dataclass
 class AnalysisSummary:
+    """Resumo agregado dos resultados de análise."""
+
     total_itens: int = 0
     itens_comprar: int = 0
     itens_ok: int = 0
@@ -63,7 +77,10 @@ _STATUS_ORDER = {
 
 
 class StockAnalyzer:
+    """Calcula recomendações de reposição a partir dos limites de estoque."""
+
     def calcular_status(self, item: ItemRecord) -> AnalysisResult:
+        """Calcula status, quantidade recomendada e valor estimado do item."""
         sem_limites = item.estoque_minimo == 0 and item.estoque_ideal == 0
 
         if item.qtd_atual == 0 and not sem_limites:
@@ -101,11 +118,13 @@ class StockAnalyzer:
         )
 
     def run(self, items: list[ItemRecord]) -> list[AnalysisResult]:
+        """Analisa itens e ordena os resultados por prioridade operacional."""
         results = [self.calcular_status(item) for item in items]
         results.sort(key=lambda r: (_STATUS_ORDER[r.status], r.categoria, r.nome))
         return results
 
     def summary(self, results: list[AnalysisResult]) -> AnalysisSummary:
+        """Gera contadores e totais consolidados a partir dos resultados."""
         summary = AnalysisSummary(total_itens=len(results))
         for r in results:
             if r.status == ItemStatus.COMPRAR:

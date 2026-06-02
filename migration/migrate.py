@@ -1,5 +1,4 @@
-"""
-CLI de migracao avulsa.
+""" CLI de migracao avulsa.
 
 Uso:
     python -m migration.migrate --estoque caminho/estoque.xlsx --fornecedores caminho/fornecedores.xlsx
@@ -27,8 +26,12 @@ def run(
     fornecedores_path: Path,
 ) -> dict:
     """
-    Executa a migracao completa a partir de arquivos externos.
-    Retorna um dict com resultados para exibicao no Streamlit ou CLI.
+    Executa a migração completa a partir de arquivos externos.
+
+    Valida a existência das planilhas, inicializa o banco, executa parser,
+    transformação e carga, e retorna um dict com resultados para exibição no
+    Streamlit ou CLI. Pode lançar `FileNotFoundError` se algum arquivo não
+    existir.
     """
     estoque_path = Path(estoque_path)
     fornecedores_path = Path(fornecedores_path)

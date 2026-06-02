@@ -1,3 +1,9 @@
+""" Geração do documento Word de lista de compras.
+
+Recebe o DataFrame exibido na tela de Compras e cria um `.docx` agrupado por
+categoria, usando os estilos base definidos em `documents.base_doc`.
+"""
+
 from pathlib import Path
 
 import pandas as pd
@@ -9,8 +15,10 @@ from documents.base_doc import criar_documento, adicionar_tabela, salvar_com_tim
 
 def gerar_lista_compras(df: pd.DataFrame) -> Path:
     """
-    Recebe um DataFrame com colunas:
-    Item, Categoria, Atual, Mínimo, Ideal, Comprar, Fornecedor, Valor Est.
+    Gera a lista de compras a partir de um DataFrame de recomendações.
+
+    Espera colunas como `Item`, `Categoria`, `Atual`, `Mínimo`, `Ideal`,
+    `Comprar`, `Fornecedor` e `Valor Est.`. Retorna o caminho do arquivo salvo.
     """
     doc = criar_documento("Lista de Compras")
 

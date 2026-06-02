@@ -1,3 +1,9 @@
+""" Tela inicial do sistema.
+
+Apresenta os módulos disponíveis e orienta o primeiro uso, especialmente a
+definição dos limites mínimo e ideal que alimentam o motor de compras.
+"""
+
 import streamlit as st
 
 from core.ui import page_header, section_title
@@ -18,6 +24,7 @@ _PAGES = [
 section_title("Módulos do sistema")
 st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
+# Renderiza os cards em linhas de até três módulos para manter a leitura limpa.
 for chunk_start in range(0, len(_PAGES), 3):
     chunk = _PAGES[chunk_start : chunk_start + 3]
     cols = st.columns(len(chunk))
