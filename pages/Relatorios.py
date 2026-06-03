@@ -24,16 +24,55 @@ page_header("Relatórios", subtitle="Consumo histórico por período, categoria,
 
 SessionLocal = get_session_factory()
 
-tab_mensal, tab_categoria, tab_setor, tab_item, tab_historico = st.tabs([
-    "Consumo Mensal",
-    "Por Categoria",
-    "Por Setor",
-    "Por Item",
-    "Histórico de Movimentações",
-])
+st.markdown("""
+<style>
+[data-testid="stRadio"] [role="radiogroup"] {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0 !important;
+    flex-wrap: nowrap !important;
+    border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+    padding-bottom: 0 !important;
+    margin-bottom: 0.75rem !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0.4rem 1.1rem 0.55rem 1.1rem !important;
+    margin: 0 0 -1px 0 !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    color: rgba(49, 51, 63, 0.6) !important;
+    font-size: 0.875rem !important;
+    font-weight: 400 !important;
+    white-space: nowrap !important;
+    transition: color 0.15s !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label [data-baseweb="radio"],
+[data-testid="stRadio"] [role="radiogroup"] > label input[type="radio"] {
+    display: none !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+    border-bottom: 2px solid rgb(255, 75, 75) !important;
+    color: rgb(255, 75, 75) !important;
+    font-weight: 600 !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:hover {
+    color: rgba(49, 51, 63, 0.85) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+tab_sel = st.radio(
+    "",
+    ["Consumo Mensal", "Por Categoria", "Por Setor", "Por Item", "Histórico de Movimentações"],
+    key="rel_tab", horizontal=True, label_visibility="collapsed",
+)
 
 # ── Tab: Consumo Mensal ───────────────────────────────────────────────────────
-with tab_mensal:
+if tab_sel == "Consumo Mensal":
     with SessionLocal() as session:
         df_mensal = consumo_por_mes(session)
 
@@ -56,7 +95,7 @@ with tab_mensal:
         st.plotly_chart(fig, use_container_width=True)
 
 # ── Tab: Por Categoria ────────────────────────────────────────────────────────
-with tab_categoria:
+elif tab_sel == "Por Categoria":
     with SessionLocal() as session:
         df_cat = consumo_por_categoria(session)
 
@@ -76,7 +115,7 @@ with tab_categoria:
         st.plotly_chart(fig, use_container_width=True)
 
 # ── Tab: Por Setor ────────────────────────────────────────────────────────────
-with tab_setor:
+elif tab_sel == "Por Setor":
     section_title("Filtros")
     periodo_setor = st.selectbox(
         "Período",
@@ -122,7 +161,7 @@ with tab_setor:
         st.caption(f"{len(df_setor)} setor(es) com movimentações no período.")
 
 # ── Tab: Por Item ─────────────────────────────────────────────────────────────
-with tab_item:
+elif tab_sel == "Por Item":
     section_title("Filtros")
     col1, col2 = st.columns(2)
     with col1:
@@ -179,7 +218,7 @@ with tab_item:
         st.caption(f"{len(df_item)} item(ns) com movimentações no período.")
 
 # ── Tab: Histórico de Movimentações ──────────────────────────────────────────
-with tab_historico:
+elif tab_sel == "Histórico de Movimentações":
     section_title("Filtros")
     col1, col2 = st.columns(2)
     with col1:
