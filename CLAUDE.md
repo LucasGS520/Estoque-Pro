@@ -65,14 +65,15 @@ with SessionLocal() as session:
 
 ## Regras e Instruções de Execução
 **Regras obrigatórias de economia (NÃO IGNORAR)**
-1) NÃO liste árvore inteira do projeto (evite `tree`, `ls -R`, etc.). Se precisar, liste apenas pastas-alvo da FASE.
-2) NÃO leia arquivos completos. Leia no máximo 120 linhas por arquivo (ou trechos específicos). Se precisar de mais contextualização, peça antes.
-3) Priorize busca (rg/grep) para localizar pontos de mudança antes de abrir arquivos.
-5) Não cole conteúdo integral de arquivos na resposta. Mostre apenas:
+1) **NÃO liste árvore inteira do projeto (evite `tree`, `ls -R`, etc.)**. Se precisar, liste apenas pastas-alvo da FASE.
+2) **NÃO leia arquivos completos.** Leia no máximo 120 linhas por arquivo (ou trechos específicos). Se precisar de mais contextualização, peça antes.
+3) **NÃO execute ações, mudanças ou qualquer outro tipo de refatoração em UI/UX, lógica ou que possam afetar diretamente no fluxo de navegação do usuario**, a menos que não tenha sido claramente aprovado ou bem planejado.
+4) Está totalmente liberado **sugerir, propor e recomendar mudanças e melhorias** que possam arrumar ou evoluir o sistema, porém elas devem ser aprovadas e bem explicadas para mim, antes de ocorrer a implementação/execução das mesmas.
+5) Priorize busca (rg/grep) para localizar pontos de mudança antes de abrir arquivos.
+6) **Não cole conteúdo integral de arquivos na resposta.** Mostre apenas:
    - arquivos alterados
    - resumo do diff (o que mudou e por quê)
    - comandos executados e resultados
-6) Execute somente UMA FASE por vez. Ao terminar a FASE:
+7) Execute somente **UMA FASE por vez**. Ao terminar a FASE:
    - pare e peça autorização para a próxima FASE
-7) Se detectar duplicação/overreach fora do escopo, interrompa e reporte.
-
+8) Se detectar duplicação/overreach fora do escopo, **interrompa e reporte**.

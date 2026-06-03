@@ -479,3 +479,17 @@ def atualizar_setor(
     session.commit()
     session.refresh(setor)
     return setor
+
+
+def delete_setor(session: Session, setor_id: int) -> None:
+    """Remove um setor somente quando não possui movimentações vinculadas."""
+    setor = session.get(Setor, setor_id)
+    if not setor:
+        raise ValueError(f"Setor {setor_id} não encontrado")
+    if setor.movimentacoes:
+        raise ValueError(
+            "Não é possível remover um setor que possui movimentações vinculadas. "
+            "Desative-o em vez de remover."
+        )
+    session.delete(setor)
+    session.commit()
