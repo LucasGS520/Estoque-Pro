@@ -4,18 +4,27 @@ Exibe gráficos e tabelas derivados do histórico de movimentações, sem altera
 dados do banco.
 """
 
+import calendar
+import datetime
+
 import streamlit as st
 import plotly.express as px
 
 from core.database import get_session_factory
-from core.models import Item
+from core.models import Item, Movimentacao
 from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS
-from services.estoque_service import get_setores
+from services.estoque_service import get_categorias, get_setores
 from services.relatorio_service import (
     consumo_e_entradas_por_mes,
     consumo_por_categoria,
     consumo_por_item,
     consumo_por_setor,
+    get_kpis_consumo,
+    get_resumo_categoria_periodo,
+    get_resumo_setor_periodo,
+    get_timeline_consumo,
+    get_top_itens_consumo,
+    get_top_itens_entrada,
     historico_movimentacoes,
 )
 
@@ -82,78 +91,83 @@ st.markdown("""
 
 tab_sel = st.radio(
     "Navegação",
-    ["Consumo Mensal", "Por Categoria", "Por Setor", "Por Item", "Histórico de Movimentações"],
+    ["Consumo × Reposição", "Por Categoria", "Por Setor", "Por Item", "Histórico de Movimentações"],
     key="rel_tab", horizontal=True, label_visibility="collapsed",
 )
 
 # ── Tab: Consumo Mensal ───────────────────────────────────────────────────────
-if tab_sel == "Consumo Mensal":
+if tab_sel == "Consumo × Reposição":
+    # ── Bloco 1 — Filtros ─────────────────────────────────────────────────────
     section_title("Filtros")
-    periodo_mensal = st.selectbox(
-        "Período",
-        options=[3, 6, 12],
-        format_func=lambda m: f"Últimos {m} meses",
-        index=1,
-        key="mensal_periodo",
-    )
 
     with SessionLocal() as session:
-        df_consol = consumo_e_entradas_por_mes(session, meses=periodo_mensal)
+        cats_disp = get_categorias(session)
+        setores_disp_m = get_setores(session, apenas_ativos=False)
 
-    if df_consol.empty:
+    cat_opcoes_m = {"Todas as categorias": None} | {c.nome: c.id for c in cats_disp}
+    setor_opcoes_m = {"Todos os setores": None} | {s.nome: s.id for s in setores_disp_m}
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        periodo_mensal = st.selectbox(
+            "Período",
+            options=[3, 6, 12],
+            format_func=lambda m: f"Últimos {m} meses",
+            index=1,
+            key="mensal_periodo",
+        )
+    with c2:
+        cat_m_sel = st.selectbox("Categoria", list(cat_opcoes_m.keys()), key="mensal_cat")
+        cat_m_id = cat_opcoes_m[cat_m_sel]
+    with c3:
+        setor_m_sel = st.selectbox("Setor", list(setor_opcoes_m.keys()), key="mensal_setor")
+        setor_m_id = setor_opcoes_m[setor_m_sel]
+
+    data_fim_m = datetime.date.today()
+    data_inicio_m = data_fim_m - datetime.timedelta(days=periodo_mensal * 30)
+
+    with SessionLocal() as session:
+        df_timeline = get_timeline_consumo(session, data_inicio_m, data_fim_m, cat_m_id, setor_m_id)
+        kpis = get_kpis_consumo(session, data_inicio_m, data_fim_m, cat_m_id, setor_m_id)
+
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    if df_timeline.empty:
         empty_state("📊", "Nenhum dado disponível", "Nenhuma movimentação registrada no período.")
     else:
-        df_consol["mes_label"] = df_consol["mes"].apply(_fmt_mes)
+        # ── Bloco 2 — KPIs ────────────────────────────────────────────────────
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Total consumido", f"{kpis['total_saida']:,}".replace(",", "."))
+        k2.metric("Total de entradas", f"{kpis['total_entrada']:,}".replace(",", "."))
+        k3.metric("Item mais consumido", kpis["item_mais_consumido"])
+        k4.metric("Setor com maior consumo", kpis["setor_mais_consumiu"])
 
-        # Gráfico 1 — Barras agrupadas: consumo x entradas
-        chart_title("Consumo mensal — visão consolidada")
-        df_bar = df_consol.melt(
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+        # ── Bloco 3 — Gráfico Principal ───────────────────────────────────────
+        df_timeline["mes_label"] = df_timeline["mes"].apply(_fmt_mes)
+
+        chart_title(f"Consumo × Reposição (últimos {periodo_mensal} meses)")
+        df_line = df_timeline.melt(
             id_vars="mes_label",
             value_vars=["total_saida", "total_entrada"],
             var_name="tipo",
             value_name="quantidade",
         )
-        df_bar["tipo"] = df_bar["tipo"].map({"total_saida": "Consumo", "total_entrada": "Entradas"})
-        fig_bar = px.bar(
-            df_bar,
+        df_line["tipo"] = df_line["tipo"].map({"total_saida": "consumo", "total_entrada": "reposição"})
+        fig_line = px.line(
+            df_line,
             x="mes_label",
             y="quantidade",
             color="tipo",
-            barmode="group",
-            color_discrete_map={"Consumo": DFEB_COLORS["red"], "Entradas": DFEB_COLORS["black"]},
+            markers=True,
+            color_discrete_map={"consumo": DFEB_COLORS["red"], "reposição": DFEB_COLORS["black"]},
             labels={"mes_label": "Mês", "quantidade": "Quantidade", "tipo": ""},
-            category_orders={"mes_label": df_consol["mes_label"].tolist()},
+            category_orders={"mes_label": df_timeline["mes_label"].tolist()},
         )
-        fig_bar.update_layout(xaxis_type="category")
-        apply_chart_theme(fig_bar, height=300, showlegend=True)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-        # Gráfico 2 — Linhas: tendência consumo x entradas (apenas com ≥ 2 meses)
-        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
-        if len(df_consol) >= 2:
-            chart_title("Consumo × Entradas — tendência")
-            df_line = df_consol.melt(
-                id_vars="mes_label",
-                value_vars=["total_saida", "total_entrada"],
-                var_name="tipo",
-                value_name="quantidade",
-            )
-            df_line["tipo"] = df_line["tipo"].map({"total_saida": "Consumo", "total_entrada": "Entradas"})
-            fig_line = px.line(
-                df_line,
-                x="mes_label",
-                y="quantidade",
-                color="tipo",
-                markers=True,
-                color_discrete_map={"Consumo": DFEB_COLORS["red"], "Entradas": DFEB_COLORS["black"]},
-                labels={"mes_label": "Mês", "quantidade": "Quantidade", "tipo": ""},
-                category_orders={"mes_label": df_consol["mes_label"].tolist()},
-            )
-            fig_line.update_layout(xaxis_type="category")
-            apply_chart_theme(fig_line, height=260, showlegend=True)
-            st.plotly_chart(fig_line, use_container_width=True)
-        else:
-            st.info("Dados de apenas 1 mês disponíveis — gráfico de tendência requer pelo menos 2 meses.")
+        fig_line.update_layout(xaxis_type="category")
+        apply_chart_theme(fig_line, height=300, showlegend=True)
+        st.plotly_chart(fig_line, use_container_width=True)
 
 # ── Tab: Por Categoria ────────────────────────────────────────────────────────
 elif tab_sel == "Por Categoria":
