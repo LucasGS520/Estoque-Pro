@@ -63,7 +63,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 tab_sel = st.radio(
-    "",
+    "Navegação",
     ["Orçamento Atual", "Cadastrar Cotação"],
     key="orc_tab", horizontal=True, label_visibility="collapsed",
 )

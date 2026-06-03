@@ -4,20 +4,44 @@ Exibe gráficos e tabelas derivados do histórico de movimentações, sem altera
 dados do banco.
 """
 
+import calendar
+import datetime
+
 import streamlit as st
 import plotly.express as px
 
 from core.database import get_session_factory
-from core.models import Item
-from core.ui import setup_page, page_header, section_title, empty_state, apply_plotly_theme
-from services.estoque_service import get_setores
+from core.models import Item, Movimentacao
+from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS
+from services.estoque_service import get_categorias, get_setores
 from services.relatorio_service import (
+    consumo_e_entradas_por_mes,
     consumo_por_categoria,
     consumo_por_item,
-    consumo_por_mes,
     consumo_por_setor,
+    get_kpis_consumo,
+    get_resumo_categoria_periodo,
+    get_resumo_setor_periodo,
+    get_timeline_consumo,
+    get_top_itens_consumo,
+    get_top_itens_entrada,
     historico_movimentacoes,
 )
+
+# Meses abreviados pt-BR para formatar eixo X dos gráficos temporais
+_MESES_PTBR = {
+    "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr",
+    "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago",
+    "09": "Set", "10": "Out", "11": "Nov", "12": "Dez",
+}
+
+def _fmt_mes(mes_str: str) -> str:
+    """Converte 'YYYY-MM' em 'Mmm/AA' (ex: '2025-06' → 'Jun/25')."""
+    try:
+        ano, mes = mes_str.split("-")
+        return f"{_MESES_PTBR.get(mes, mes)}/{ano[2:]}"
+    except Exception:
+        return mes_str
 
 setup_page("Relatórios", "📈")
 page_header("Relatórios", subtitle="Consumo histórico por período, categoria, setor e item.")
@@ -66,52 +90,125 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 tab_sel = st.radio(
-    "",
-    ["Consumo Mensal", "Por Categoria", "Por Setor", "Por Item", "Histórico de Movimentações"],
+    "Navegação",
+    ["Consumo × Reposição", "Por Categoria", "Por Setor", "Por Item", "Histórico de Movimentações"],
     key="rel_tab", horizontal=True, label_visibility="collapsed",
 )
 
 # ── Tab: Consumo Mensal ───────────────────────────────────────────────────────
-if tab_sel == "Consumo Mensal":
-    with SessionLocal() as session:
-        df_mensal = consumo_por_mes(session)
+if tab_sel == "Consumo × Reposição":
+    # ── Bloco 1 — Filtros ─────────────────────────────────────────────────────
+    section_title("Filtros")
 
-    if df_mensal.empty:
-        empty_state("📊", "Nenhum dado disponível", "Nenhuma movimentação de saída registrada ainda.")
-    else:
-        with SessionLocal() as session:
-            itens_map = {i.id: i.nome for i in session.query(Item).all()}
-        df_mensal["item"] = df_mensal["item_id"].map(itens_map)
-        fig = px.line(
-            df_mensal,
-            x="mes",
-            y="total_saida",
-            color="item",
-            markers=True,
-            title="Consumo Mensal por Item",
-            labels={"mes": "Mês", "total_saida": "Qtd. Consumida", "item": "Item"},
+    with SessionLocal() as session:
+        cats_disp = get_categorias(session)
+        setores_disp_m = get_setores(session, apenas_ativos=False)
+
+    cat_opcoes_m = {"Todas as categorias": None} | {c.nome: c.id for c in cats_disp}
+    setor_opcoes_m = {"Todos os setores": None} | {s.nome: s.id for s in setores_disp_m}
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        periodo_mensal = st.selectbox(
+            "Período",
+            options=[3, 6, 12],
+            format_func=lambda m: f"Últimos {m} meses",
+            index=1,
+            key="mensal_periodo",
         )
-        apply_plotly_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        cat_m_sel = st.selectbox("Categoria", list(cat_opcoes_m.keys()), key="mensal_cat")
+        cat_m_id = cat_opcoes_m[cat_m_sel]
+    with c3:
+        setor_m_sel = st.selectbox("Setor", list(setor_opcoes_m.keys()), key="mensal_setor")
+        setor_m_id = setor_opcoes_m[setor_m_sel]
+
+    data_fim_m = datetime.date.today()
+    data_inicio_m = data_fim_m - datetime.timedelta(days=periodo_mensal * 30)
+
+    with SessionLocal() as session:
+        df_timeline = get_timeline_consumo(session, data_inicio_m, data_fim_m, cat_m_id, setor_m_id)
+        kpis = get_kpis_consumo(session, data_inicio_m, data_fim_m, cat_m_id, setor_m_id)
+
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    if df_timeline.empty:
+        empty_state("📊", "Nenhum dado disponível", "Nenhuma movimentação registrada no período.")
+    else:
+        # ── Bloco 2 — KPIs ────────────────────────────────────────────────────
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Total consumido", f"{kpis['total_saida']:,}".replace(",", "."))
+        k2.metric("Total de entradas", f"{kpis['total_entrada']:,}".replace(",", "."))
+        k3.metric("Item mais consumido", kpis["item_mais_consumido"])
+        k4.metric("Setor com maior consumo", kpis["setor_mais_consumiu"])
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+        # ── Bloco 3 — Gráfico Principal ───────────────────────────────────────
+        df_timeline["mes_label"] = df_timeline["mes"].apply(_fmt_mes)
+
+        chart_title(f"Consumo × Reposição (últimos {periodo_mensal} meses)")
+        df_line = df_timeline.melt(
+            id_vars="mes_label",
+            value_vars=["total_saida", "total_entrada"],
+            var_name="tipo",
+            value_name="quantidade",
+        )
+        df_line["tipo"] = df_line["tipo"].map({"total_saida": "consumo", "total_entrada": "reposição"})
+        fig_line = px.line(
+            df_line,
+            x="mes_label",
+            y="quantidade",
+            color="tipo",
+            markers=True,
+            color_discrete_map={"consumo": DFEB_COLORS["red"], "reposição": DFEB_COLORS["black"]},
+            labels={"mes_label": "Mês", "quantidade": "Quantidade", "tipo": ""},
+            category_orders={"mes_label": df_timeline["mes_label"].tolist()},
+        )
+        fig_line.update_layout(xaxis_type="category")
+        apply_chart_theme(fig_line, height=300, showlegend=True)
+        st.plotly_chart(fig_line, use_container_width=True)
 
 # ── Tab: Por Categoria ────────────────────────────────────────────────────────
 elif tab_sel == "Por Categoria":
+    section_title("Filtros")
+    _PERIODO_CAT_OPTS = {"Últimos 3 meses": 3, "Últimos 6 meses": 6, "Últimos 12 meses": 12, "Todo histórico": None}
+    periodo_cat_label = st.selectbox("Período", list(_PERIODO_CAT_OPTS.keys()), index=1, key="cat_periodo")
+    periodo_cat = _PERIODO_CAT_OPTS[periodo_cat_label]
+
     with SessionLocal() as session:
-        df_cat = consumo_por_categoria(session)
+        df_cat = consumo_por_categoria(session, meses=periodo_cat)
 
     if df_cat.empty:
-        empty_state("📊", "Nenhum dado disponível", "Nenhuma movimentação de saída registrada ainda.")
+        empty_state("📊", "Nenhum dado disponível", "Nenhuma movimentação de saída registrada no período.")
     else:
-        fig = px.bar(
-            df_cat,
-            x="categoria",
-            y="total_saida",
-            title="Consumo Total por Categoria",
-            labels={"categoria": "Categoria", "total_saida": "Qtd. Consumida"},
-            color="total_saida",
-            color_continuous_scale=["#FEE2E2", "#E10600"],
-        )
-        apply_plotly_theme(fig)
+        n_cats = len(df_cat)
+        # Orientação auto: vertical ≤ 6 categorias, horizontal se mais
+        if n_cats <= 6:
+            chart_title("Consumo por categoria")
+            fig = px.bar(
+                df_cat,
+                x="categoria",
+                y="total_saida",
+                text="total_saida",
+                labels={"categoria": "Categoria", "total_saida": "Qtd. Consumida"},
+            )
+            fig.update_traces(marker_color=DFEB_COLORS["red"], textposition="outside")
+            apply_chart_theme(fig, height=320)
+        else:
+            chart_title("Consumo por categoria")
+            fig = px.bar(
+                df_cat.sort_values("total_saida"),
+                x="total_saida",
+                y="categoria",
+                orientation="h",
+                text="total_saida",
+                labels={"categoria": "Categoria", "total_saida": "Qtd. Consumida"},
+            )
+            fig.update_traces(marker_color=DFEB_COLORS["red"], textposition="outside")
+            fig.update_layout(yaxis={"categoryorder": "total ascending"})
+            apply_chart_theme(fig, height=max(320, n_cats * 36))
+        fig.update_layout(coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
 # ── Tab: Por Setor ────────────────────────────────────────────────────────────
@@ -135,20 +232,43 @@ elif tab_sel == "Por Setor":
             "Nenhuma saída com setor registrada no período selecionado.",
         )
     else:
+        # KPIs acima do gráfico
+        total_geral = df_setor["total_saida"].sum()
+        sem_setor_row = df_setor[df_setor["setor"] == "Sem setor"]
+        total_sem_setor = int(sem_setor_row["total_saida"].sum()) if not sem_setor_row.empty else 0
+        setores_ativos = df_setor[df_setor["setor"] != "Sem setor"]["setor"].nunique()
+        pct_sem_setor = (total_sem_setor / total_geral * 100) if total_geral > 0 else 0
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Total retirado", int(total_geral))
+        k2.metric("Setores com consumo", setores_ativos)
+        k3.metric("% sem setor", f"{pct_sem_setor:.1f}%")
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        # Coloração semântica: top setor = vermelho, "Sem setor" = laranja, demais = preto
+        setor_top = df_setor.iloc[0]["setor"] if len(df_setor) > 0 else None
+        bar_colors = []
+        for _, row in df_setor.sort_values("total_saida").iterrows():
+            if row["setor"] == "Sem setor":
+                bar_colors.append(DFEB_COLORS["orange"])
+            elif row["setor"] == setor_top:
+                bar_colors.append(DFEB_COLORS["red"])
+            else:
+                bar_colors.append(DFEB_COLORS["black"])
+
+        chart_title("Consumo por setor")
         fig = px.bar(
-            df_setor,
+            df_setor.sort_values("total_saida"),
             x="total_saida",
             y="setor",
             orientation="h",
-            title=f"Consumo por Setor — últimos {periodo_setor} meses",
-            labels={"total_saida": "Qtd. Retirada", "setor": "Setor"},
-            color="total_saida",
-            color_continuous_scale=["#DBEAFE", "#1D4ED8"],
             text="total_saida",
+            labels={"total_saida": "Qtd. Retirada", "setor": "Setor"},
         )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(yaxis={"categoryorder": "total ascending"}, showlegend=False)
-        apply_plotly_theme(fig)
+        fig.update_traces(textposition="outside", marker_color=bar_colors)
+        fig.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
+        apply_chart_theme(fig, height=max(280, len(df_setor) * 40))
         st.plotly_chart(fig, use_container_width=True)
 
         section_title("Detalhamento")
@@ -189,25 +309,35 @@ elif tab_sel == "Por Item":
             "Nenhuma saída registrada com os filtros selecionados.",
         )
     else:
-        top20 = df_item.head(20)
+        top_n = st.selectbox("Exibir top", [10, 20], index=1, key="item_top_n")
+        top_df = df_item.head(top_n)
+
+        # 1ª barra (maior consumo) = vermelho; demais = preto
+        item_top = top_df.iloc[0]["item"] if len(top_df) > 0 else None
+        bar_colors_item = [
+            DFEB_COLORS["red"] if row["item"] == item_top else DFEB_COLORS["black"]
+            for _, row in top_df.sort_values("total_saida").iterrows()
+        ]
+
+        chart_title(f"Top {len(top_df)} itens por consumo")
         fig = px.bar(
-            top20,
+            top_df.sort_values("total_saida"),
             x="total_saida",
             y="item",
             orientation="h",
-            title=f"Top {len(top20)} Itens por Consumo — últimos {periodo_item} meses",
-            labels={"total_saida": "Qtd. Retirada", "item": "Item"},
-            color="total_saida",
-            color_continuous_scale=["#FEF3C7", "#D97706"],
             text="total_saida",
+            labels={"total_saida": "Qtd. Retirada", "item": "Item"},
         )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(yaxis={"categoryorder": "total ascending"}, showlegend=False)
-        apply_plotly_theme(fig)
+        fig.update_traces(textposition="outside", marker_color=bar_colors_item)
+        fig.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
+        apply_chart_theme(fig, height=max(280, len(top_df) * 36))
         st.plotly_chart(fig, use_container_width=True)
 
         section_title("Detalhamento")
-        df_exib = df_item.rename(columns={
+        cols_exib = ["item", "categoria", "total_saida", "num_movimentacoes"]
+        if setor_id_filtro is not None:
+            cols_exib.insert(2, "setor")
+        df_exib = df_item[cols_exib].rename(columns={
             "item": "Item",
             "categoria": "Categoria",
             "setor": "Setor",
@@ -219,15 +349,29 @@ elif tab_sel == "Por Item":
 
 # ── Tab: Histórico de Movimentações ──────────────────────────────────────────
 elif tab_sel == "Histórico de Movimentações":
+    from core.models import Categoria as CategoriaModel
+
     section_title("Filtros")
-    col1, col2 = st.columns(2)
+    col1, col2, col3, col4 = st.columns(4)
+
     with col1:
         filtro_tipo = st.selectbox(
             "Tipo",
             ["Todos", "entrada", "saida"],
+            format_func=lambda t: {"Todos": "Todos", "entrada": "Entrada", "saida": "Saída"}.get(t, t),
             key="hist_tipo",
         )
     with col2:
+        _PERIODO_HIST_OPTS = {"Últimos 30 dias": 1, "Últimos 3 meses": 3, "Últimos 6 meses": 6, "Todo histórico": None}
+        periodo_hist_label = st.selectbox("Período", list(_PERIODO_HIST_OPTS.keys()), index=3, key="hist_periodo")
+        periodo_hist = _PERIODO_HIST_OPTS[periodo_hist_label]
+    with col3:
+        with SessionLocal() as session:
+            cats_hist = session.query(CategoriaModel).all()
+        cat_opcoes_hist = {"Todas as categorias": None} | {c.nome: c.id for c in cats_hist}
+        cat_hist_sel = st.selectbox("Categoria", list(cat_opcoes_hist.keys()), key="hist_cat")
+        cat_hist_id = cat_opcoes_hist[cat_hist_sel]
+    with col4:
         limite = st.number_input("Limite de registros", min_value=10, max_value=1000, value=100)
 
     tipo_filtro = None if filtro_tipo == "Todos" else filtro_tipo
@@ -239,21 +383,58 @@ elif tab_sel == "Histórico de Movimentações":
         empty_state("📋", "Nenhuma movimentação encontrada")
     else:
         with SessionLocal() as session:
-            itens_map = {i.id: i.nome for i in session.query(Item).all()}
+            itens_obj = session.query(Item).all()
+            itens_map = {i.id: i.nome for i in itens_obj}
+            itens_cat_map = {i.id: (i.categoria.nome if i.categoria else None) for i in itens_obj}
+
         if "item_id" in df_hist.columns:
             df_hist.insert(1, "item", df_hist["item_id"].map(itens_map))
+            df_hist.insert(2, "_cat", df_hist["item_id"].map(itens_cat_map))
             df_hist = df_hist.drop(columns=["item_id"])
 
-        df_hist = df_hist.rename(columns={
-            "data": "Data",
-            "item": "Item",
-            "tipo": "Tipo",
-            "setor": "Setor",
-            "quantidade": "Qtd.",
-            "qtd_anterior": "Anterior",
-            "qtd_nova": "Nova",
-            "motivo": "Motivo",
-            "retirado_por": "Retirado por",
-        })
-        st.dataframe(df_hist, use_container_width=True, hide_index=True)
-        st.caption(f"{len(df_hist)} registros")
+        # Filtro por categoria (client-side após fetch)
+        if cat_hist_id is not None:
+            cat_nome = cat_hist_sel
+            df_hist = df_hist[df_hist["_cat"] == cat_nome]
+
+        # Filtro por período (client-side)
+        if periodo_hist is not None:
+            import datetime as _dt
+            corte = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None) - _dt.timedelta(days=periodo_hist * 30)
+            try:
+                df_hist = df_hist[
+                    df_hist["data"].apply(
+                        lambda d: _dt.datetime.strptime(d, "%d/%m/%Y %H:%M") >= corte
+                    )
+                ]
+            except Exception:
+                pass
+
+        # .copy() garante DataFrame independente — evita KeyError por CoW do pandas 2.0+
+        df_hist = df_hist.drop(columns=["_cat"], errors="ignore").copy()
+
+        if df_hist.empty:
+            empty_state("📋", "Nenhuma movimentação encontrada para os filtros selecionados.")
+        else:
+            # Badge HTML para coluna Tipo
+            _TIPO_BADGE = {
+                "entrada": "<span style='background:#F4F4F5;color:#262626;padding:2px 8px;"
+                           "border-radius:4px;font-size:12px;font-weight:500;'>Entrada</span>",
+                "saida":   "<span style='background:#FEE2E2;color:#E10600;padding:2px 8px;"
+                           "border-radius:4px;font-size:12px;font-weight:500;'>Saída</span>",
+            }
+            df_hist["tipo_badge"] = df_hist["tipo"].map(_TIPO_BADGE).fillna(df_hist["tipo"])
+
+            df_exib = df_hist.drop(columns=["tipo"]).rename(columns={
+                "data": "Data",
+                "item": "Item",
+                "tipo_badge": "Tipo",
+                "setor": "Setor",
+                "quantidade": "Qtd.",
+                "qtd_anterior": "Anterior",
+                "qtd_nova": "Nova",
+                "motivo": "Motivo",
+                "retirado_por": "Retirado por",
+            })
+            st.write(df_exib.to_html(escape=False, index=False), unsafe_allow_html=True)
+            st.caption(f"{len(df_exib)} registros")

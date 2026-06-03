@@ -87,7 +87,7 @@ if _fb := st.session_state.pop("_fb", None):
     getattr(st, _fb[0])(_fb[1])
 
 tab_sel = st.radio(
-    "", ["Visualizar", "Registrar Movimentação", "Editar"],
+    "Navegação", ["Visualizar", "Registrar Movimentação", "Editar"],
     key="estoque_tab", horizontal=True, label_visibility="collapsed"
 )
 
@@ -239,7 +239,7 @@ elif tab_sel == "Registrar Movimentação":
 # ── Tab 3: Editar ─────────────────────────────────────────────────────────────
 elif tab_sel == "Editar":
     subtab_sel = st.radio(
-        "", ["Itens", "Categorias", "Setores", "Fornecedores"],
+        "Edição", ["Itens", "Categorias", "Setores", "Fornecedores"],
         key="estoque_subtab", horizontal=True, label_visibility="collapsed"
     )
 
