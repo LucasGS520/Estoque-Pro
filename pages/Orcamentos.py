@@ -21,10 +21,55 @@ page_header("Orçamentos", subtitle="Estimativa de valor por fornecedor com base
 
 SessionLocal = get_session_factory()
 
-tab_orcamento, tab_cotacao = st.tabs(["Orçamento Atual", "Cadastrar Cotação"])
+st.markdown("""
+<style>
+[data-testid="stRadio"] [role="radiogroup"] {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0 !important;
+    flex-wrap: nowrap !important;
+    border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+    padding-bottom: 0 !important;
+    margin-bottom: 0.75rem !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0.4rem 1.1rem 0.55rem 1.1rem !important;
+    margin: 0 0 -1px 0 !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    color: rgba(49, 51, 63, 0.6) !important;
+    font-size: 0.875rem !important;
+    font-weight: 400 !important;
+    white-space: nowrap !important;
+    transition: color 0.15s !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label [data-baseweb="radio"],
+[data-testid="stRadio"] [role="radiogroup"] > label input[type="radio"] {
+    display: none !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+    border-bottom: 2px solid rgb(255, 75, 75) !important;
+    color: rgb(255, 75, 75) !important;
+    font-weight: 600 !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:hover {
+    color: rgba(49, 51, 63, 0.85) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+tab_sel = st.radio(
+    "",
+    ["Orçamento Atual", "Cadastrar Cotação"],
+    key="orc_tab", horizontal=True, label_visibility="collapsed",
+)
 
 # ── Tab 1: Orçamento ──────────────────────────────────────────────────────────
-with tab_orcamento:
+if tab_sel == "Orçamento Atual":
     with SessionLocal() as session:
         snapshots = get_latest_snapshot(session)
 
@@ -34,80 +79,79 @@ with tab_orcamento:
             "Nenhuma análise disponível",
             "Vá até Compras e clique em Rodar Análise para gerar os dados.",
         )
-        st.stop()
+    else:
+        with SessionLocal() as session:
+            # Reexecuta a análise para manter orçamento e snapshots alinhados.
+            results_raw, _ = run_analysis(session)
+            orcamento = consolidar_orcamento(session, results_raw)
 
-    with SessionLocal() as session:
-        # Reexecuta a análise para manter orçamento e snapshots alinhados.
-        results_raw, _ = run_analysis(session)
-        orcamento = consolidar_orcamento(session, results_raw)
+        # KPIs
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Itens com preço", len(orcamento.itens_com_preco))
+        c2.metric("Itens sem preço", len(orcamento.itens_sem_preco))
+        c3.metric("Total Estimado", fmt_brl(orcamento.total_estimado))
 
-    # KPIs
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Itens com preço", len(orcamento.itens_com_preco))
-    c2.metric("Itens sem preço", len(orcamento.itens_sem_preco))
-    c3.metric("Total Estimado", fmt_brl(orcamento.total_estimado))
-
-    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-
-    # Tabela com preço
-    if orcamento.itens_com_preco:
-        section_title("Itens com Cotação")
-        rows = [
-            {
-                "Item": i.nome,
-                "Categoria": i.categoria,
-                "Qtd": i.quantidade,
-                "Preço Unit.": fmt_brl(i.preco_unitario),
-                "Total": fmt_brl(i.total),
-                "Fornecedor": i.fornecedor,
-                "Validade Cotação": i.validade_cotacao,
-            }
-            for i in orcamento.itens_com_preco
-        ]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    # Por fornecedor
-    if orcamento.por_fornecedor:
-        section_title("Subtotal por Fornecedor")
-        rows_forn = [
-            {"Fornecedor": k, "Total": fmt_brl(v)}
-            for k, v in orcamento.por_fornecedor.items()
-        ]
-        st.dataframe(pd.DataFrame(rows_forn), use_container_width=True, hide_index=True)
-
-    # Sem preço
-    if orcamento.itens_sem_preco:
-        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
-        section_title(f"Itens sem Cotação — {len(orcamento.itens_sem_preco)} item(ns)")
-        st.warning(
-            f"{len(orcamento.itens_sem_preco)} item(ns) sem preço registrado não entram no total estimado.",
-            icon="⚠️",
-        )
-        rows_sp = [
-            {"Item": i.nome, "Categoria": i.categoria, "Qtd": i.quantidade}
-            for i in orcamento.itens_sem_preco
-        ]
-        st.dataframe(pd.DataFrame(rows_sp), use_container_width=True, hide_index=True)
-        st.caption("Cadastre cotações na aba **Cadastrar Cotação**.")
-
-    # Download
-    if orcamento.itens_com_preco:
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-        try:
-            from documents.orcamento import gerar_orcamento
-            path = gerar_orcamento(orcamento)
-            with open(path, "rb") as f:
-                st.download_button(
-                    "📄 Baixar Orçamento (.docx)",
-                    data=f.read(),
-                    file_name=path.name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                )
-        except ImportError:
-            pass
+
+        # Tabela com preço
+        if orcamento.itens_com_preco:
+            section_title("Itens com Cotação")
+            rows = [
+                {
+                    "Item": i.nome,
+                    "Categoria": i.categoria,
+                    "Qtd": i.quantidade,
+                    "Preço Unit.": fmt_brl(i.preco_unitario),
+                    "Total": fmt_brl(i.total),
+                    "Fornecedor": i.fornecedor,
+                    "Validade Cotação": i.validade_cotacao,
+                }
+                for i in orcamento.itens_com_preco
+            ]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        # Por fornecedor
+        if orcamento.por_fornecedor:
+            section_title("Subtotal por Fornecedor")
+            rows_forn = [
+                {"Fornecedor": k, "Total": fmt_brl(v)}
+                for k, v in orcamento.por_fornecedor.items()
+            ]
+            st.dataframe(pd.DataFrame(rows_forn), use_container_width=True, hide_index=True)
+
+        # Sem preço
+        if orcamento.itens_sem_preco:
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+            section_title(f"Itens sem Cotação — {len(orcamento.itens_sem_preco)} item(ns)")
+            st.warning(
+                f"{len(orcamento.itens_sem_preco)} item(ns) sem preço registrado não entram no total estimado.",
+                icon="⚠️",
+            )
+            rows_sp = [
+                {"Item": i.nome, "Categoria": i.categoria, "Qtd": i.quantidade}
+                for i in orcamento.itens_sem_preco
+            ]
+            st.dataframe(pd.DataFrame(rows_sp), use_container_width=True, hide_index=True)
+            st.caption("Cadastre cotações na aba **Cadastrar Cotação**.")
+
+        # Download
+        if orcamento.itens_com_preco:
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            try:
+                from documents.orcamento import gerar_orcamento
+                path = gerar_orcamento(orcamento)
+                with open(path, "rb") as f:
+                    st.download_button(
+                        "📄 Baixar Orçamento (.docx)",
+                        data=f.read(),
+                        file_name=path.name,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+            except ImportError:
+                pass
 
 # ── Tab 2: Cadastrar Cotação ──────────────────────────────────────────────────
-with tab_cotacao:
+elif tab_sel == "Cadastrar Cotação":
     section_title("Cadastrar cotação de preço")
     st.info("Preencha o formulário para registrar o preço de um item para um fornecedor.", icon="ℹ️")
 

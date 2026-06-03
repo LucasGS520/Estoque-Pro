@@ -173,12 +173,14 @@ def get_tabela_mestre(
 
         nomes_forn = [f.nome for f in item.fornecedores_associados]
 
-        sem_limites = item.estoque_minimo == 0 and item.estoque_ideal == 0
+        minimo_v = item.estoque_minimo_vigente
+        ideal_v = item.estoque_ideal_vigente
+        sem_limites = minimo_v == 0 and ideal_v == 0
         if item.estoque_atual == 0 and not sem_limites:
             status = "zerado"
         elif sem_limites:
             status = "sem_minimo"
-        elif item.estoque_atual <= item.estoque_minimo:
+        elif item.estoque_atual <= minimo_v:
             status = "comprar"
         else:
             status = "ok"
@@ -189,8 +191,12 @@ def get_tabela_mestre(
             "item": item.nome,
             "unidade": item.unidade,
             "atual": item.estoque_atual,
-            "minimo": item.estoque_minimo,
-            "ideal": item.estoque_ideal,
+            "minimo": minimo_v,
+            "ideal": ideal_v,
+            "minimo_sugerido": item.estoque_minimo_sugerido,
+            "ideal_sugerido": item.estoque_ideal_sugerido,
+            "origem_minimo": item.origem_minimo,
+            "origem_ideal": item.origem_ideal,
             "status": status,
             "ultima_mov_data": ultima_mov.criado_em if ultima_mov else None,
             "ultima_mov_tipo": ultima_mov.tipo if ultima_mov else None,
@@ -227,7 +233,7 @@ def get_kpis_basicos(session: Session) -> dict:
     total = session.query(Item).filter(Item.ativo == True).count()  # noqa: E712
     sem_minimo = (
         session.query(Item)
-        .filter(Item.ativo == True, Item.estoque_minimo == 0, Item.estoque_ideal == 0)  # noqa: E712
+        .filter(Item.ativo == True, Item.estoque_minimo_vigente == 0, Item.estoque_ideal_vigente == 0)  # noqa: E712
         .count()
     )
     return {
@@ -243,8 +249,8 @@ def create_item(
     nome: str,
     unidade: str = "un",
     estoque_atual: int = 0,
-    estoque_minimo: int = 0,
-    estoque_ideal: int = 0,
+    estoque_minimo_manual: Optional[int] = None,
+    estoque_ideal_manual: Optional[int] = None,
     observacoes: Optional[str] = None,
     ativo: bool = True,
 ) -> Item:
@@ -252,6 +258,10 @@ def create_item(
 
     Valida categoria e duplicidade por nome normalizado dentro da mesma
     categoria. Persiste com `commit` e retorna o item criado.
+
+    Se estoque_minimo_manual/estoque_ideal_manual forem fornecidos (> 0), os
+    vigentes são inicializados como manuais. Caso contrário, aguardam revisão
+    automática.
     """
     cat = session.query(Categoria).filter_by(id=categoria_id).first()
     if not cat:
@@ -266,16 +276,28 @@ def create_item(
     if duplicado:
         raise ValueError(f"Já existe um item com o nome '{nome}' nessa categoria")
 
+    agora = datetime.datetime.utcnow()
+    tem_manual_min = estoque_minimo_manual is not None and estoque_minimo_manual > 0
+    tem_manual_ideal = estoque_ideal_manual is not None and estoque_ideal_manual > 0
+
     item = Item(
         categoria_id=categoria_id,
         nome=nome.strip(),
         nome_normalizado=nome_norm,
         unidade=unidade,
         estoque_atual=estoque_atual,
-        estoque_minimo=estoque_minimo,
-        estoque_ideal=estoque_ideal,
+        estoque_minimo=estoque_minimo_manual or 0,   # campo legado
+        estoque_ideal=estoque_ideal_manual or 0,      # campo legado
         observacoes=observacoes,
         ativo=ativo,
+        estoque_minimo_manual=estoque_minimo_manual if tem_manual_min else None,
+        estoque_ideal_manual=estoque_ideal_manual if tem_manual_ideal else None,
+        data_definicao_minimo_manual=agora if tem_manual_min else None,
+        data_definicao_ideal_manual=agora if tem_manual_ideal else None,
+        estoque_minimo_vigente=estoque_minimo_manual if tem_manual_min else 0,
+        estoque_ideal_vigente=estoque_ideal_manual if tem_manual_ideal else 0,
+        origem_minimo="Manual" if tem_manual_min else None,
+        origem_ideal="Manual" if tem_manual_ideal else None,
     )
     session.add(item)
     session.commit()
@@ -289,16 +311,14 @@ def update_item_completo(
     categoria_id: int,
     nome: str,
     unidade: str,
-    estoque_minimo: int,
-    estoque_ideal: int,
     observacoes: Optional[str] = None,
     ativo: bool = True,
 ) -> Item:
     """Atualiza dados cadastrais de um item existente.
 
     Valida categoria, duplicidade de nome na categoria e persiste a alteração.
-    Não altera o estoque atual; movimentações devem passar por
-    `registrar_movimentacao`.
+    Não altera estoque atual nem mínimo/ideal — esses são gerenciados via
+    `registrar_movimentacao` e `aplicar_minimo_ideal_manual` respectivamente.
     """
     item = session.query(Item).filter_by(id=item_id).first()
     if not item:
@@ -325,8 +345,6 @@ def update_item_completo(
     item.nome = nome.strip()
     item.nome_normalizado = nome_norm
     item.unidade = unidade
-    item.estoque_minimo = estoque_minimo
-    item.estoque_ideal = estoque_ideal
     item.observacoes = observacoes
     item.ativo = ativo
     item.atualizado_em = datetime.datetime.utcnow()
@@ -461,3 +479,23 @@ def atualizar_setor(
     session.commit()
     session.refresh(setor)
     return setor
+
+
+def delete_setor(session: Session, setor_id: int, force: bool = False) -> int:
+    """Remove um setor. Se force=True, desvincula movimentações antes de deletar.
+    Retorna o número de movimentações desvinculadas."""
+    setor = session.get(Setor, setor_id)
+    if not setor:
+        raise ValueError(f"Setor {setor_id} não encontrado")
+    mov_count = len(setor.movimentacoes)
+    if mov_count > 0 and not force:
+        raise ValueError(
+            f"Este setor possui {mov_count} movimentação(ões) vinculada(s). "
+            "Desative-o em vez de remover, ou use remoção forçada."
+        )
+    if force:
+        for mov in setor.movimentacoes:
+            mov.setor_id = None
+    session.delete(setor)
+    session.commit()
+    return mov_count

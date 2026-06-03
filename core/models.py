@@ -55,10 +55,27 @@ class Item(Base):
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
     atualizado_em = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+    # --- Camada automática de mínimo/ideal ---
+    # Valores calculados pelo motor de revisão mensal (sempre atualizados)
+    estoque_minimo_sugerido = Column(Integer, nullable=True)
+    estoque_ideal_sugerido = Column(Integer, nullable=True)
+    # Valores definidos manualmente pelo usuário (override opcional)
+    estoque_minimo_manual = Column(Integer, nullable=True)
+    estoque_ideal_manual = Column(Integer, nullable=True)
+    data_definicao_minimo_manual = Column(DateTime, nullable=True)
+    data_definicao_ideal_manual = Column(DateTime, nullable=True)
+    # Valores vigentes: manual se definido, senão sugerido (usados em toda operação)
+    estoque_minimo_vigente = Column(Integer, nullable=False, default=0)
+    estoque_ideal_vigente = Column(Integer, nullable=False, default=0)
+    # Origem dos valores vigentes: "Manual" ou "Automático"
+    origem_minimo = Column(String(20), nullable=True)
+    origem_ideal = Column(String(20), nullable=True)
+
     categoria = relationship("Categoria", back_populates="itens")
     precos = relationship("PrecoFornecedor", back_populates="item", cascade="all, delete-orphan")
     movimentacoes = relationship("Movimentacao", back_populates="item", cascade="all, delete-orphan")
     snapshots = relationship("SnapshotAnalise", back_populates="item", cascade="all, delete-orphan")
+    revisoes_mensais = relationship("RevisaoMensal", back_populates="item", cascade="all, delete-orphan")
     fornecedores_associados = relationship(
         "Fornecedor", secondary=item_fornecedores, order_by="Fornecedor.nome"
     )
@@ -152,6 +169,29 @@ class SnapshotAnalise(Base):
 
     item = relationship("Item", back_populates="snapshots")
     fornecedor_sugerido = relationship("Fornecedor")
+
+
+class RevisaoMensal(Base):
+    """Resultado de uma revisão mensal do cálculo automático de mínimo/ideal de um item."""
+
+    __tablename__ = "revisoes_mensais"
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    periodo_descricao = Column(String(50))          # ex: "Junho/2026"
+    data_inicio_analise = Column(DateTime)
+    data_fim_analise = Column(DateTime)
+    consumo_mediana_diario = Column(Float)
+    consumo_p75_diario = Column(Float)
+    intervalo_mediano_dias = Column(Integer)
+    intervalo_p90_dias = Column(Integer)
+    minimo_sugerido = Column(Integer)
+    ideal_sugerido = Column(Integer)
+    # ok / historico_insuficiente / historico_recente / sem_consumo_recente / sem_entradas_recentes / irregular
+    status_confiabilidade = Column(String(50))
+
+    item = relationship("Item", back_populates="revisoes_mensais")
 
 
 class Importacao(Base):
