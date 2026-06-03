@@ -481,15 +481,21 @@ def atualizar_setor(
     return setor
 
 
-def delete_setor(session: Session, setor_id: int) -> None:
-    """Remove um setor somente quando não possui movimentações vinculadas."""
+def delete_setor(session: Session, setor_id: int, force: bool = False) -> int:
+    """Remove um setor. Se force=True, desvincula movimentações antes de deletar.
+    Retorna o número de movimentações desvinculadas."""
     setor = session.get(Setor, setor_id)
     if not setor:
         raise ValueError(f"Setor {setor_id} não encontrado")
-    if setor.movimentacoes:
+    mov_count = len(setor.movimentacoes)
+    if mov_count > 0 and not force:
         raise ValueError(
-            "Não é possível remover um setor que possui movimentações vinculadas. "
-            "Desative-o em vez de remover."
+            f"Este setor possui {mov_count} movimentação(ões) vinculada(s). "
+            "Desative-o em vez de remover, ou use remoção forçada."
         )
+    if force:
+        for mov in setor.movimentacoes:
+            mov.setor_id = None
     session.delete(setor)
     session.commit()
+    return mov_count

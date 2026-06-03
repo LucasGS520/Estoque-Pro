@@ -667,9 +667,27 @@ elif tab_sel == "Editar":
                 for f in fornecedores
             ]
 
+        col_fi_forn_busca, col_fi_forn_status = st.columns([3, 2])
+        with col_fi_forn_busca:
+            fi_forn_busca = st.text_input(
+                "Buscar por nome", placeholder="Digite parte do nome...", key="fi_forn_busca"
+            )
+        with col_fi_forn_status:
+            fi_forn_status = st.selectbox("Status", ["Todos", "Ativos", "Inativos"], key="fi_forn_status")
+
+        df_forn_rows_filtered = [
+            r for r in df_forn_rows
+            if fi_forn_busca.lower() in r["Nome"].lower()
+            and (
+                fi_forn_status == "Todos"
+                or (fi_forn_status == "Ativos" and r["Ativo"] == "Sim")
+                or (fi_forn_status == "Inativos" and r["Ativo"] == "Não")
+            )
+        ]
+
         if df_forn_rows:
-            st.dataframe(pd.DataFrame(df_forn_rows), use_container_width=True, hide_index=True)
-            st.caption(f"{len(df_forn_rows)} fornecedores no total")
+            st.dataframe(pd.DataFrame(df_forn_rows_filtered), use_container_width=True, hide_index=True)
+            st.caption(f"{len(df_forn_rows_filtered)} de {len(df_forn_rows)} fornecedores")
         else:
             st.info("Nenhum fornecedor cadastrado.")
 
@@ -832,9 +850,18 @@ elif tab_sel == "Editar":
                 for c in categorias_all
             ]
 
+        fi_cat_busca = st.text_input(
+            "Buscar por nome", placeholder="Digite parte do nome...", key="fi_cat_busca"
+        )
+
+        df_cat_rows_filtered = [
+            r for r in df_cat_rows
+            if fi_cat_busca.lower() in r["Nome"].lower()
+        ]
+
         if df_cat_rows:
-            st.dataframe(pd.DataFrame(df_cat_rows), use_container_width=True, hide_index=True)
-            st.caption(f"{len(df_cat_rows)} categorias no total")
+            st.dataframe(pd.DataFrame(df_cat_rows_filtered), use_container_width=True, hide_index=True)
+            st.caption(f"{len(df_cat_rows_filtered)} de {len(df_cat_rows)} categorias")
         else:
             st.info("Nenhuma categoria cadastrada.")
 
@@ -964,13 +991,34 @@ elif tab_sel == "Editar":
                 for s in setores_all
             ]
             setor_data = [
-                {"id": s.id, "nome": s.nome, "descricao": s.descricao or "", "ativo": s.ativo}
+                {
+                    "id": s.id, "nome": s.nome, "descricao": s.descricao or "",
+                    "ativo": s.ativo, "mov_count": len(s.movimentacoes),
+                }
                 for s in setores_all
             ]
 
+        col_fi_set_busca, col_fi_set_status = st.columns([3, 2])
+        with col_fi_set_busca:
+            fi_set_busca = st.text_input(
+                "Buscar por nome", placeholder="Digite parte do nome...", key="fi_set_busca"
+            )
+        with col_fi_set_status:
+            fi_set_status = st.selectbox("Status", ["Todos", "Ativos", "Inativos"], key="fi_set_status")
+
+        df_set_rows_filtered = [
+            r for r in df_set_rows
+            if fi_set_busca.lower() in r["Nome"].lower()
+            and (
+                fi_set_status == "Todos"
+                or (fi_set_status == "Ativos" and r["Ativo"] == "Sim")
+                or (fi_set_status == "Inativos" and r["Ativo"] == "Não")
+            )
+        ]
+
         if df_set_rows:
-            st.dataframe(pd.DataFrame(df_set_rows), use_container_width=True, hide_index=True)
-            st.caption(f"{len(df_set_rows)} setor(es) no total")
+            st.dataframe(pd.DataFrame(df_set_rows_filtered), use_container_width=True, hide_index=True)
+            st.caption(f"{len(df_set_rows_filtered)} de {len(df_set_rows)} setor(es)")
         else:
             st.info("Nenhum setor cadastrado.")
 
@@ -1054,24 +1102,22 @@ elif tab_sel == "Editar":
                                 st.error(str(e))
 
                 st.divider()
+                set_mov_count = set_sel.get("mov_count", 0)
+
                 if st.button(
                     "Remover setor", key=f"btn_del_set_{set_sel_id}", type="secondary"
                 ):
-                    st.session_state[f"confirm_del_set_{set_sel_id}"] = True
-
-                if st.session_state.get(f"confirm_del_set_{set_sel_id}"):
-                    st.warning(
-                        f"Remover **{set_sel_nome}**? "
-                        "A remoção só é permitida se não houver movimentações vinculadas. "
-                        "Caso contrário, desative o setor em vez de removê-lo."
+                    st.session_state[f"confirm_del_set_{set_sel_id}"] = (
+                        "simple" if set_mov_count == 0 else "warn"
                     )
+
+                _del_state = st.session_state.get(f"confirm_del_set_{set_sel_id}")
+
+                if _del_state == "simple":
+                    st.warning(f"Remover **{set_sel_nome}** permanentemente? Esta ação não pode ser desfeita.")
                     col_yes, col_no = st.columns(2)
                     with col_yes:
-                        if st.button(
-                            "Confirmar exclusão",
-                            key=f"btn_confirm_set_{set_sel_id}",
-                            type="primary",
-                        ):
+                        if st.button("Confirmar exclusão", key=f"btn_confirm_set_{set_sel_id}", type="primary"):
                             try:
                                 with st.spinner("Removendo..."):
                                     with SessionLocal() as session:
@@ -1083,5 +1129,66 @@ elif tab_sel == "Editar":
                                 st.error(str(e))
                     with col_no:
                         if st.button("Cancelar", key=f"btn_cancel_set_{set_sel_id}"):
+                            st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
+                            st.rerun()
+
+                elif _del_state == "warn":
+                    st.info(
+                        f"**{set_sel_nome}** possui **{set_mov_count} movimentação(ões)** vinculada(s). "
+                        "Recomendamos **desativar** o setor para preservar o histórico intacto."
+                    )
+                    col_desat, col_force = st.columns(2)
+                    with col_desat:
+                        if st.button(
+                            "Desativar setor", key=f"btn_desat_set_{set_sel_id}", use_container_width=True
+                        ):
+                            try:
+                                with st.spinner("Desativando..."):
+                                    with SessionLocal() as session:
+                                        estoque_service.atualizar_setor(
+                                            session, set_sel_id, set_sel_nome,
+                                            set_sel.get("descricao") or None, False
+                                        )
+                                st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
+                                st.session_state["_fb"] = ("success", f"Setor **{set_sel_nome}** desativado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
+                    with col_force:
+                        if st.button(
+                            "Remover mesmo assim", key=f"btn_force_set_{set_sel_id}",
+                            type="secondary", use_container_width=True
+                        ):
+                            st.session_state[f"confirm_del_set_{set_sel_id}"] = "force"
+                            st.rerun()
+                    if st.button("Cancelar", key=f"btn_cancel_set_{set_sel_id}"):
+                        st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
+                        st.rerun()
+
+                elif _del_state == "force":
+                    st.warning(
+                        f"Atenção: **{set_mov_count} movimentação(ões)** perderão a referência a este setor "
+                        "(o campo setor ficará em branco). Esta ação não pode ser desfeita."
+                    )
+                    col_confirm, col_cancel = st.columns(2)
+                    with col_confirm:
+                        if st.button(
+                            "Confirmar remoção", key=f"btn_force_confirm_set_{set_sel_id}", type="primary"
+                        ):
+                            try:
+                                with st.spinner("Removendo..."):
+                                    with SessionLocal() as session:
+                                        estoque_service.delete_setor(session, set_sel_id, force=True)
+                                st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
+                                st.session_state["_fb"] = (
+                                    "success",
+                                    f"Setor **{set_sel_nome}** removido. "
+                                    f"{set_mov_count} movimentação(ões) desvinculada(s).",
+                                )
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
+                    with col_cancel:
+                        if st.button("Cancelar", key=f"btn_cancel2_set_{set_sel_id}"):
                             st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
                             st.rerun()
