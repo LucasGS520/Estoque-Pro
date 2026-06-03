@@ -37,9 +37,16 @@ def consumo_por_mes(session: Session, item_id: Optional[int] = None) -> pd.DataF
     return df.sort_values("mes")
 
 
-def consumo_por_categoria(session: Session) -> pd.DataFrame:
-    """Agrupa a quantidade consumida por categoria de item."""
-    movs = session.query(Movimentacao).filter(Movimentacao.tipo == "saida").all()
+def consumo_por_categoria(session: Session, meses: Optional[int] = None) -> pd.DataFrame:
+    """Agrupa a quantidade consumida por categoria de item.
+
+    `meses=None` soma todo o histórico; qualquer inteiro restringe aos últimos N meses.
+    """
+    q = session.query(Movimentacao).filter(Movimentacao.tipo == "saida")
+    if meses is not None:
+        desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
+        q = q.filter(Movimentacao.criado_em >= desde)
+    movs = q.all()
     if not movs:
         return pd.DataFrame(columns=["categoria", "total_saida"])
 
@@ -105,7 +112,7 @@ def historico_movimentacoes(
 
 def consumo_por_setor(session: Session, meses: int = 6) -> pd.DataFrame:
     """Agrega total de saídas por setor nos últimos N meses."""
-    desde = datetime.datetime.utcnow() - datetime.timedelta(days=meses * 30)
+    desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
     movs = (
         session.query(Movimentacao)
         .options(joinedload(Movimentacao.setor))
@@ -141,7 +148,7 @@ def consumo_por_item(
 
     Quando `setor_id` é informado, filtra apenas as saídas daquele setor.
     """
-    desde = datetime.datetime.utcnow() - datetime.timedelta(days=meses * 30)
+    desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
     q = (
         session.query(Movimentacao)
         .options(
@@ -169,9 +176,54 @@ def consumo_por_item(
         for m in movs
     ]
     df = pd.DataFrame(rows)
+    # Com setor específico, mantém detalhamento por setor.
+    # Sem filtro, consolida por item para evitar duplicação no ranking.
+    group_cols = ["item", "categoria", "setor"] if setor_id is not None else ["item", "categoria"]
     result = (
-        df.groupby(["item", "categoria", "setor"])["quantidade"]
+        df.groupby(group_cols)["quantidade"]
         .agg(total_saida="sum", num_movimentacoes="count")
         .reset_index()
     )
+    if setor_id is None:
+        result["setor"] = "Todos"
     return result.sort_values("total_saida", ascending=False)
+
+
+def consumo_e_entradas_por_mes(session: Session, meses: int = 6) -> pd.DataFrame:
+    """Retorna totais mensais consolidados de saída e entrada.
+
+    Diferente de `consumo_por_mes()`, agrega globalmente (não por item),
+    ideal para o gráfico de visão consolidada e linha de tendência.
+    Retorna colunas: ["mes", "total_saida", "total_entrada"] ordenadas por mes ASC.
+    """
+    desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
+    movs = (
+        session.query(Movimentacao)
+        .filter(
+            Movimentacao.tipo.in_(["saida", "entrada"]),
+            Movimentacao.criado_em >= desde,
+        )
+        .all()
+    )
+
+    if not movs:
+        return pd.DataFrame(columns=["mes", "total_saida", "total_entrada"])
+
+    rows = [
+        {"mes": m.criado_em.strftime("%Y-%m"), "tipo": m.tipo, "quantidade": m.quantidade}
+        for m in movs
+    ]
+    df = pd.DataFrame(rows)
+    pivot = (
+        df.groupby(["mes", "tipo"])["quantidade"]
+        .sum()
+        .unstack(fill_value=0)
+        .reset_index()
+    )
+    # Garante que ambas as colunas existam mesmo se só houver um tipo no período
+    if "saida" not in pivot.columns:
+        pivot["saida"] = 0
+    if "entrada" not in pivot.columns:
+        pivot["entrada"] = 0
+    pivot = pivot.rename(columns={"saida": "total_saida", "entrada": "total_entrada"})
+    return pivot[["mes", "total_saida", "total_entrada"]].sort_values("mes")

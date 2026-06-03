@@ -13,6 +13,17 @@ import streamlit as st
 _ASSETS = Path(__file__).parent.parent / "assets"
 _LOGO = _ASSETS / "logo_dfeb.png"
 
+# ── Paleta de cores DFeB ──────────────────────────────────────────────────────
+DFEB_COLORS: dict[str, str] = {
+    "red":    "#E10600",
+    "black":  "#262626",
+    "gray":   "#9CA3AF",
+    "grid":   "#E5E5E5",
+    "muted":  "#737373",
+    "green":  "#16A34A",
+    "orange": "#F59E0B",
+}
+
 # ── CSS global injetado em cada página ───────────────────────────────────────
 _CSS = """
 <style>
@@ -251,6 +262,19 @@ header[data-testid="stHeader"] {
 [data-testid="stSidebar"] button[title*="tela cheia"] {
     display: none !important;
 }
+
+/* ── Card title para gráficos ─────────────────────────────────────────── */
+.dfeb-chart-card-title {
+    border: 1px solid #E5E5E5;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    padding: 12px 16px;
+    background: #FFFFFF;
+    color: #0A0A0A;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 0 !important;
+}
 </style>
 """
 
@@ -353,4 +377,55 @@ def apply_plotly_theme(fig) -> None:
             linecolor="#E5E5E5",
             tickfont=dict(size=11),
         ),
+    )
+
+
+def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
+    """Aplica tema padronizado DFeB a gráficos Plotly (versão refinada).
+
+    Fundo totalmente branco, margens controladas, grid cinza discreto.
+    Use este helper nos gráficos novos/refatorados; apply_plotly_theme()
+    permanece para retrocompatibilidade.
+    """
+    fig.update_layout(
+        height=height,
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(
+            family="Inter, system-ui, -apple-system, sans-serif",
+            color="#262626",
+            size=12,
+        ),
+        margin=dict(t=24, r=20, b=36, l=48),
+        showlegend=showlegend,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.25,
+            xanchor="left",
+            x=0,
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor="rgba(0,0,0,0)",
+            font=dict(size=12, color="#262626"),
+        ),
+        xaxis=dict(
+            gridcolor="#E5E5E5",
+            zeroline=False,
+            linecolor="#E5E5E5",
+            tickfont=dict(size=11, color="#737373"),
+        ),
+        yaxis=dict(
+            gridcolor="#E5E5E5",
+            zeroline=False,
+            linecolor="#E5E5E5",
+            tickfont=dict(size=11, color="#737373"),
+        ),
+    )
+
+
+def chart_title(title: str) -> None:
+    """Renderiza o cabeçalho visual de um card de gráfico."""
+    st.markdown(
+        f'<div class="dfeb-chart-card-title">{title}</div>',
+        unsafe_allow_html=True,
     )

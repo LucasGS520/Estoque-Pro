@@ -10,7 +10,7 @@ import pandas as pd
 
 from core.database import get_session_factory
 from core.engine import ItemRecord, ItemStatus, StockAnalyzer
-from core.ui import setup_page, page_header, section_title, empty_state, apply_plotly_theme
+from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title
 from services.estoque_service import get_all_itens
 
 setup_page("Visão Geral", "📊")
@@ -52,39 +52,40 @@ col5.metric("Zerados", sumario.itens_zerados)
 st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
 # ── Gráfico por categoria ─────────────────────────────────────────────────────
-section_title("Status por Categoria")
 
-_STATUS_CORES = {
-    "comprar":             "#E10600",
-    "zerado":              "#F59E0B",
-    "sem_minimo_definido": "#9CA3AF",
-    "ok":                  "#16A34A",
-}
 _STATUS_LABELS = {
     "comprar":             "Comprar",
     "zerado":              "Zerado",
     "sem_minimo_definido": "Sem Limite",
     "ok":                  "OK",
 }
+# Mapeamento por label (não enum) para evitar valores técnicos na legenda
+_STATUS_CORES_LABEL = {
+    "Comprar":    "#E10600",
+    "Zerado":     "#F59E0B",
+    "Sem Limite": "#9CA3AF",
+    "OK":         "#16A34A",
+}
+_STATUS_ORDER = ["Comprar", "Zerado", "OK", "Sem Limite"]
 
 rows_chart = [{"categoria": r.categoria, "status": r.status.value} for r in results]
 df_chart = pd.DataFrame(rows_chart)
 df_agg = df_chart.groupby(["categoria", "status"]).size().reset_index(name="count")
 df_agg["status_label"] = df_agg["status"].map(_STATUS_LABELS).fillna(df_agg["status"])
 
+chart_title("Distribuição de Status por Categoria")
 fig = px.bar(
     df_agg,
     x="categoria",
     y="count",
-    color="status",
-    color_discrete_map=_STATUS_CORES,
+    color="status_label",
+    color_discrete_map=_STATUS_CORES_LABEL,
+    category_orders={"status_label": _STATUS_ORDER},
     barmode="stack",
-    labels={"count": "Qtd. Itens", "categoria": "Categoria", "status": "Status"},
-    title="Distribuição de Status por Categoria",
-    custom_data=["status_label"],
+    labels={"count": "Qtd. Itens", "categoria": "Categoria", "status_label": "Status"},
 )
-fig.update_traces(hovertemplate="%{customdata[0]}: %{y}<extra></extra>")
-apply_plotly_theme(fig)
+fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y}<extra></extra>")
+apply_chart_theme(fig, height=320, showlegend=True)
 st.plotly_chart(fig, use_container_width=True)
 
 # ── Itens críticos ────────────────────────────────────────────────────────────
