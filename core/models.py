@@ -79,6 +79,8 @@ class Item(Base):
     fornecedores_associados = relationship(
         "Fornecedor", secondary=item_fornecedores, order_by="Fornecedor.nome"
     )
+    solicitacoes = relationship("SolicitacaoMaterial", back_populates="item", cascade="all, delete-orphan")
+    itens_lista_compra = relationship("ItemListaCompra", back_populates="item", cascade="all, delete-orphan")
 
 
 class Fornecedor(Base):
@@ -192,6 +194,59 @@ class RevisaoMensal(Base):
     status_confiabilidade = Column(String(50))
 
     item = relationship("Item", back_populates="revisoes_mensais")
+
+
+class SolicitacaoMaterial(Base):
+    """Pedido de compra registrado por um setor para um período de referência."""
+
+    __tablename__ = "solicitacoes_material"
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, ForeignKey("itens.id"), nullable=True)
+    nome_item_livre = Column(String(200), nullable=True)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    solicitante = Column(String(100), nullable=False)
+    quantidade_solicitada = Column(Integer, nullable=False)
+    observacao = Column(Text, nullable=True)
+    periodo_referencia = Column(Date, nullable=False)
+    status = Column(String(20), nullable=False, default="pendente")
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    item = relationship("Item", back_populates="solicitacoes")
+    setor = relationship("Setor")
+
+
+class ItemListaCompra(Base):
+    """Resultado consolidado de análise de compra por item e período.
+
+    Carrega os campos editáveis de governança (quantidade_final_definida, motivo)
+    e a flag de aprovação para envio ao Orçamentos.
+    """
+
+    __tablename__ = "itens_lista_compra"
+    __table_args__ = (
+        UniqueConstraint("item_id", "periodo_referencia", name="uq_item_lista_periodo"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
+    periodo_referencia = Column(Date, nullable=False)
+    status = Column(String(30), nullable=False)
+    estoque_atual_snap = Column(Integer, nullable=False, default=0)
+    estoque_minimo_snap = Column(Integer, nullable=False, default=0)
+    estoque_ideal_snap = Column(Integer, nullable=False, default=0)
+    total_solicitado = Column(Integer, nullable=False, default=0)
+    quantidade_sugerida = Column(Integer, nullable=False, default=0)
+    quantidade_final_definida = Column(Integer, nullable=True)
+    motivo = Column(Text, nullable=True)
+    incluir_na_lista_final = Column(Boolean, default=False)
+    valor_estimado = Column(Float, nullable=True)
+    fornecedor_sugerido_id = Column(Integer, ForeignKey("fornecedores.id"), nullable=True)
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    item = relationship("Item", back_populates="itens_lista_compra")
+    fornecedor_sugerido = relationship("Fornecedor")
 
 
 class Importacao(Base):

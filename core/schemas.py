@@ -6,7 +6,7 @@ persistem informações nem acessam Streamlit.
 
 from datetime import date
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class ItemUpdate(BaseModel):
@@ -48,6 +48,31 @@ class MovimentacaoCreate(BaseModel):
     @classmethod
     def quantidade_positiva(cls, v: int) -> int:
         """Garante que movimentações tenham quantidade positiva."""
+        if v <= 0:
+            raise ValueError("Quantidade deve ser maior que zero")
+        return v
+
+
+class SolicitacaoMaterialCreate(BaseModel):
+    """Dados necessários para registrar uma solicitação de compra."""
+
+    item_id: Optional[int] = None
+    nome_item_livre: Optional[str] = None
+    setor_id: Optional[int] = None
+    solicitante: str
+    quantidade_solicitada: int
+    observacao: Optional[str] = None
+    periodo_referencia: date
+
+    @model_validator(mode="after")
+    def item_ou_nome_livre(self) -> "SolicitacaoMaterialCreate":
+        if self.item_id is None and not self.nome_item_livre:
+            raise ValueError("Informe item_id ou nome_item_livre")
+        return self
+
+    @field_validator("quantidade_solicitada")
+    @classmethod
+    def quantidade_positiva(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("Quantidade deve ser maior que zero")
         return v

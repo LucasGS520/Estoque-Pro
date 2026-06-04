@@ -1,152 +1,505 @@
-""" Tela de análise de compras.
+""" Tela da camada de Compras — governança da necessidade de compra.
 
-Permite executar o motor de reposição, consultar o snapshot mais recente e
-baixar a lista de compras em `.docx` para os itens recomendados.
+Fluxo: seleção de período → consolidar → revisar painel → validar análise → lista final.
+Os pedidos de compra dos setores são registrados na página "Pedido de Compra".
 """
 
-import streamlit as st
+import datetime
+
 import pandas as pd
-from sqlalchemy.orm import joinedload
+import streamlit as st
 
 from core.database import get_session_factory
-from core.ui import setup_page, page_header, section_title, empty_state, fmt_brl
-from services.compras_service import run_analysis, get_latest_snapshot
+from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
+from services.compras_service import (
+    aprovar_item,
+    consolidar_periodo,
+    deletar_solicitacao,
+    get_consolidacao_periodo,
+    get_lista_final,
+    get_periodos_com_consolidacao,
+    listar_solicitacoes,
+    remover_da_lista,
+)
+from services.estoque_service import get_categorias
 
 setup_page("Compras", "🛒")
-page_header("Compras", subtitle="Análise de reposição e lista de itens para compra.")
+page_header("Compras", subtitle="Governança da necessidade de compra.")
+
+# ── CSS: st.radio como abas (mesmo padrão de todas as outras páginas) ──────────
+st.markdown("""
+<style>
+[data-testid="stRadio"] [role="radiogroup"] {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0 !important;
+    flex-wrap: nowrap !important;
+    border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+    padding-bottom: 0 !important;
+    margin-bottom: 0.75rem !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0.4rem 1.1rem 0.55rem 1.1rem !important;
+    margin: 0 0 -1px 0 !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    color: rgba(49, 51, 63, 0.6) !important;
+    font-size: 0.875rem !important;
+    font-weight: 400 !important;
+    white-space: nowrap !important;
+    transition: color 0.15s !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label [data-baseweb="radio"],
+[data-testid="stRadio"] [role="radiogroup"] > label input[type="radio"] {
+    display: none !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+    border-bottom: 2px solid rgb(255, 75, 75) !important;
+    color: rgb(255, 75, 75) !important;
+    font-weight: 600 !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:hover {
+    color: rgba(49, 51, 63, 0.85) !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 SessionLocal = get_session_factory()
 
-# ── Faixa de ação — Rodar Análise ─────────────────────────────────────────────
-col_btn, col_info = st.columns([1, 3])
-with col_btn:
-    rodar = st.button("▶ Rodar Análise", type="primary", use_container_width=True)
-with col_info:
-    with SessionLocal() as session:
-        snaps = get_latest_snapshot(session)
-    if snaps:
-        ultima = snaps[0].criado_em.strftime("%d/%m/%Y %H:%M")
-        st.info(f"Última análise: **{ultima}**", icon="🕐")
-    else:
-        st.warning("Nenhuma análise realizada ainda.", icon="⚠️")
+MESES_PT = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
+}
 
-if rodar:
-    with st.spinner("Calculando..."):
-        with SessionLocal() as session:
-            results, summary = run_analysis(session)
+_STATUS_LABEL = {
+    "zerado":              "Zerado",
+    "abaixo_minimo":       "Abaixo do Mínimo",
+    "comprar":             "Comprar",
+    "ok":                  "OK",
+    "sem_minimo_definido": "Sem Mínimo",
+    "excesso":             "Excesso",
+}
+
+# ── Seletor de período ────────────────────────────────────────────────────────
+section_title("Período de Referência")
+
+hoje = datetime.date.today()
+anos_disponiveis = list(range(hoje.year - 2, hoje.year + 2))
+
+col_mes, col_ano, col_btn = st.columns([2, 1, 2])
+with col_mes:
+    mes_sel = st.selectbox(
+        "Mês",
+        options=list(MESES_PT.keys()),
+        format_func=lambda m: MESES_PT[m],
+        index=hoje.month - 1,
+        key="sel_mes",
+        label_visibility="collapsed",
+    )
+with col_ano:
+    ano_sel = st.selectbox(
+        "Ano",
+        options=anos_disponiveis,
+        index=anos_disponiveis.index(hoje.year),
+        key="sel_ano",
+        label_visibility="collapsed",
+    )
+with col_btn:
+    consolidar = st.button("▶ Consolidar Período", type="primary", use_container_width=True)
+
+periodo = datetime.date(ano_sel, mes_sel, 1)
+periodo_label = f"{MESES_PT[mes_sel]}/{ano_sel}"
+
+with SessionLocal() as _s:
+    periodos_existentes = get_periodos_com_consolidacao(_s)
+
+if periodo in periodos_existentes:
+    st.info(f"Consolidação disponível para **{periodo_label}**", icon="✅")
+else:
+    st.warning(f"Nenhuma consolidação para **{periodo_label}** — clique em Consolidar Período.", icon="⚠️")
+
+if consolidar:
+    with st.spinner("Consolidando..."):
+        with SessionLocal() as _s:
+            results, summary = consolidar_periodo(_s, periodo)
     st.success(
-        f"Análise concluída: **{summary.itens_comprar}** para comprar · "
-        f"**{summary.itens_zerados}** zerados · "
-        f"**{summary.itens_sem_minimo}** sem mínimo definido"
+        f"**{periodo_label}** consolidado — "
+        f"{summary.itens_zerados} zerado(s) · "
+        f"{summary.itens_abaixo_minimo} abaixo do mínimo · "
+        f"{summary.itens_comprar} com pedido pressiona · "
+        f"{summary.itens_excesso} excesso"
     )
     st.rerun()
 
 st.divider()
 
-# ── Carregar resultados ───────────────────────────────────────────────────────
-with SessionLocal() as session:
-    snapshots = get_latest_snapshot(session)
-    if snapshots:
-        from core.models import Item
-        item_data = {
-            i.id: i
-            for i in session.query(Item).options(joinedload(Item.categoria)).all()
-        }
+# ── Dados do período ──────────────────────────────────────────────────────────
+with SessionLocal() as _s:
+    itens_lista = get_consolidacao_periodo(_s, periodo)
+    cats = get_categorias(_s)
+    cat_nomes = ["Todas"] + sorted({x.item.categoria.nome for x in itens_lista if x.item and x.item.categoria})
 
-if not snapshots:
-    empty_state(
-        "🛒",
-        "Nenhuma análise disponível",
-        "Clique em Rodar Análise para gerar as recomendações de compra.",
-    )
-    st.stop()
-
-# Separar por status
-comprar   = [s for s in snapshots if s.status == "comprar"]
-zerados   = [s for s in snapshots if s.status == "zerado"]
-ok        = [s for s in snapshots if s.status == "ok"]
-sem_minimo = [s for s in snapshots if s.status == "sem_minimo_definido"]
-
-# ── KPIs rápidos ──────────────────────────────────────────────────────────────
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Comprar", len(comprar))
-c2.metric("Zerados", len(zerados))
-c3.metric("OK", len(ok))
-c4.metric("Sem Mínimo", len(sem_minimo))
-
-st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-
-tab_comprar, tab_zerado, tab_ok, tab_sem_min = st.tabs(
-    ["🔴 Comprar", "🟠 Zerados", "🟢 OK", "⚪ Sem Mínimo Definido"]
+# ── Navegação por abas ────────────────────────────────────────────────────────
+aba = st.radio(
+    "Navegação",
+    ["Painel de Reposição", "Consolidação", "Lista Final"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="compras_aba",
 )
 
+# =============================================================================
+# ABA 1 — PAINEL DE REPOSIÇÃO
+# =============================================================================
+if aba == "Painel de Reposição":
 
-def _gerar_doc_compras(df: pd.DataFrame) -> None:
-    """Gera e expõe o botão de download da lista de compras.
+    if not itens_lista:
+        empty_state(
+            "🛒",
+            "Sem dados para este período",
+            f"Clique em 'Consolidar Período' para gerar a análise de {periodo_label}.",
+        )
+    else:
+        zerados      = [x for x in itens_lista if x.status == "zerado"]
+        abaixo_min   = [x for x in itens_lista if x.status == "abaixo_minimo"]
+        comprar_list = [x for x in itens_lista if x.status == "comprar"]
+        excesso_list = [x for x in itens_lista if x.status == "excesso"]
+        ok_list      = [x for x in itens_lista if x.status == "ok"]
+        sem_min      = [x for x in itens_lista if x.status == "sem_minimo_definido"]
 
-    Recebe o DataFrame exibido na aba de compras. Se o módulo de documentos não
-    estiver disponível, informa o usuário sem interromper a tela.
-    """
-    try:
-        from documents.lista_compras import gerar_lista_compras
-        path = gerar_lista_compras(df)
-        with open(path, "rb") as f:
-            st.download_button(
-                label="📄 Baixar Lista de Compras (.docx)",
-                data=f.read(),
-                file_name=path.name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Zerados",        len(zerados))
+        c2.metric("Abaixo do Mín.", len(abaixo_min))
+        c3.metric("Comprar",        len(comprar_list))
+        c4.metric("Excesso",        len(excesso_list))
+        c5.metric("OK",             len(ok_list))
+        c6.metric("Sem Mínimo",     len(sem_min))
+
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+
+        # Filtros — padrão Estoque.py
+        section_title("Filtros")
+        col_busca, col_cat, col_status = st.columns([3, 2, 2])
+        with col_busca:
+            busca = st.text_input("Buscar item", placeholder="Digite parte do nome...", key="painel_busca")
+        with col_cat:
+            cat_sel = st.selectbox("Categoria", cat_nomes, key="painel_cat")
+        with col_status:
+            status_opcoes = {
+                "Todos os alertas": None,
+                "Zerado": "zerado",
+                "Abaixo do Mínimo": "abaixo_minimo",
+                "Comprar": "comprar",
+                "Sem Mínimo": "sem_minimo_definido",
+                "OK": "ok",
+            }
+            status_sel = st.selectbox("Status", list(status_opcoes.keys()), key="painel_status")
+
+        # Tabela filtrada — exclui excesso (tem seção própria abaixo)
+        STATUS_PAINEL = {"zerado", "abaixo_minimo", "comprar", "sem_minimo_definido", "ok"}
+        itens_painel = [x for x in itens_lista if x.status in STATUS_PAINEL]
+
+        # Aplicar filtros
+        busca_lower = busca.strip().lower()
+        status_code = status_opcoes[status_sel]
+        if status_code:
+            itens_painel = [x for x in itens_painel if x.status == status_code]
+        if cat_sel != "Todas":
+            itens_painel = [
+                x for x in itens_painel
+                if x.item and x.item.categoria and x.item.categoria.nome == cat_sel
+            ]
+        if busca_lower:
+            itens_painel = [
+                x for x in itens_painel
+                if x.item and busca_lower in x.item.nome.lower()
+            ]
+
+        if not itens_painel:
+            empty_state("✅", "Nenhum item encontrado para os filtros selecionados.")
+        else:
+            rows = []
+            for x in itens_painel:
+                rows.append({
+                    "Status": _STATUS_LABEL.get(x.status, x.status),
+                    "Item": x.item.nome if x.item else "—",
+                    "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                    "Estoque": x.estoque_atual_snap,
+                    "Mínimo": x.estoque_minimo_snap,
+                    "Ideal": x.estoque_ideal_snap,
+                    "Solicitado": x.total_solicitado,
+                    "Qtd Sugerida": x.quantidade_sugerida,
+                    "Fornecedor": x.fornecedor_sugerido.nome if x.fornecedor_sugerido else "—",
+                    "Valor Est.": fmt_brl(x.valor_estimado) if x.valor_estimado else "—",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        if excesso_list:
+            with st.expander(f"⚠️ {len(excesso_list)} item(ns) com excesso de estoque"):
+                rows_exc = []
+                for x in excesso_list:
+                    rows_exc.append({
+                        "Item": x.item.nome if x.item else "—",
+                        "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                        "Estoque": x.estoque_atual_snap,
+                        "Ideal": x.estoque_ideal_snap,
+                    })
+                st.dataframe(pd.DataFrame(rows_exc), use_container_width=True, hide_index=True)
+                st.caption("Itens com estoque acima de 1,5× o ideal. Não entram na lista de compras.")
+
+# =============================================================================
+# ABA 2 — CONSOLIDAÇÃO
+# =============================================================================
+elif aba == "Consolidação":
+
+    # ── Solicitações recebidas ────────────────────────────────────────────────
+    with SessionLocal() as _s:
+        sols = listar_solicitacoes(_s, periodo)
+        sols_info = [
+            {
+                "id": s.id,
+                "item_nome": s.item.nome if s.item else f"{s.nome_item_livre} (não cadastrado)",
+                "item_id": s.item_id,
+                "setor_nome": s.setor.nome if s.setor else "—",
+                "solicitante": s.solicitante,
+                "quantidade": s.quantidade_solicitada,
+                "obs": s.observacao or "",
+            }
+            for s in sols
+        ]
+
+    section_title(f"Solicitações Recebidas — {periodo_label}")
+
+    if not sols_info:
+        st.info(
+            "Nenhuma solicitação registrada para este período. "
+            "Os setores devem usar a página **Pedido de Compra** no menu lateral.",
+            icon="📝",
+        )
+    else:
+        st.caption(f"{len(sols_info)} solicitação(ões) recebida(s)")
+        for info in sols_info:
+            col_txt, col_del = st.columns([10, 1])
+            with col_txt:
+                obs_str = f" · *{info['obs']}*" if info["obs"] else ""
+                st.markdown(
+                    f"**{info['item_nome']}** &nbsp;·&nbsp; {info['quantidade']} un"
+                    f" &nbsp;·&nbsp; Setor: **{info['setor_nome']}**"
+                    f" &nbsp;·&nbsp; {info['solicitante']}{obs_str}",
+                    unsafe_allow_html=True,
+                )
+            with col_del:
+                if st.button("🗑", key=f"del_sol_{info['id']}", help="Remover solicitação"):
+                    with SessionLocal() as _s:
+                        deletar_solicitacao(_s, info["id"])
+                    st.rerun()
+
+    st.divider()
+
+    # ── Tabela de consolidação ────────────────────────────────────────────────
+    if not itens_lista:
+        empty_state(
+            "🔗",
+            "Sem consolidação para este período",
+            "Clique em 'Consolidar Período' para cruzar estoque e solicitações.",
+        )
+    else:
+        STATUS_ATIVOS = {"zerado", "abaixo_minimo", "comprar"}
+        STATUS_PENDENCIAS = {"sem_minimo_definido"}
+
+        principais = [x for x in itens_lista if x.status in STATUS_ATIVOS]
+        pendencias = [x for x in itens_lista if x.status in STATUS_PENDENCIAS]
+        sols_sem_cadastro = [i for i in sols_info if i["item_id"] is None]
+
+        if principais:
+            section_title("Itens para Decisão de Compra")
+            st.caption(
+                "Edite 'Qtd Final' e 'Motivo' quando necessário. "
+                "Marque 'Incluir na Lista' e clique em Salvar para aprovar."
             )
-    except ImportError:
-        st.info("Módulo de documentos ainda não disponível.")
 
+            rows_ed = []
+            for x in principais:
+                rows_ed.append({
+                    "_id": x.id,
+                    "Status": _STATUS_LABEL.get(x.status, x.status),
+                    "Item": x.item.nome if x.item else "—",
+                    "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                    "Estoque": x.estoque_atual_snap,
+                    "Mínimo": x.estoque_minimo_snap,
+                    "Ideal": x.estoque_ideal_snap,
+                    "Solicitado": x.total_solicitado,
+                    "Qtd Sugerida": x.quantidade_sugerida,
+                    "Qtd Final": (
+                        x.quantidade_final_definida
+                        if x.quantidade_final_definida is not None
+                        else x.quantidade_sugerida
+                    ),
+                    "Motivo": x.motivo or "",
+                    "Incluir na Lista": x.incluir_na_lista_final,
+                })
 
-def _snaps_to_df(snaps, item_data: dict) -> pd.DataFrame:
-    """Converte snapshots de análise em DataFrame pronto para exibição."""
-    rows = []
-    for s in snaps:
-        item = item_data.get(s.item_id)
-        if not item:
-            continue
-        rows.append({
-            "Item": item.nome,
-            "Categoria": item.categoria.nome,
-            "Atual": item.estoque_atual,
-            "Mínimo": item.estoque_minimo_vigente,
-            "Ideal": item.estoque_ideal_vigente,
-            "Comprar": s.quantidade_recomendar,
-            "Fornecedor": (s.fornecedor_sugerido.nome if s.fornecedor_sugerido else "—"),
-            "Valor Est.": (fmt_brl(s.valor_estimado) if s.valor_estimado else "—"),
-        })
-    return pd.DataFrame(rows)
+            df_ed = pd.DataFrame(rows_ed)
+            col_config = {
+                "_id":            st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                "Status":         st.column_config.TextColumn("Status", disabled=True),
+                "Item":           st.column_config.TextColumn("Item", disabled=True, width="medium"),
+                "Categoria":      st.column_config.TextColumn("Categoria", disabled=True),
+                "Estoque":        st.column_config.NumberColumn("Estoque", disabled=True, width="small"),
+                "Mínimo":         st.column_config.NumberColumn("Mínimo", disabled=True, width="small"),
+                "Ideal":          st.column_config.NumberColumn("Ideal", disabled=True, width="small"),
+                "Solicitado":     st.column_config.NumberColumn("Solicitado", disabled=True, width="small"),
+                "Qtd Sugerida":   st.column_config.NumberColumn("Qtd Sugerida", disabled=True, width="small"),
+                "Qtd Final":      st.column_config.NumberColumn("Qtd Final", min_value=0, width="small"),
+                "Motivo":         st.column_config.TextColumn("Motivo", width="large"),
+                "Incluir na Lista": st.column_config.CheckboxColumn("Incluir na Lista", width="small"),
+            }
+            edited_df = st.data_editor(
+                df_ed,
+                column_config=col_config,
+                hide_index=True,
+                use_container_width=True,
+                key="consolidacao_editor",
+            )
 
+            if st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
+                sug_map = {
+                    x.id: (x.quantidade_sugerida, x.item.nome if x.item else str(x.id))
+                    for x in principais
+                }
+                erros_salvar = []
+                for _, row in edited_df.iterrows():
+                    lista_id = int(row["_id"])
+                    qtd_final = int(row["Qtd Final"])
+                    motivo = str(row["Motivo"]).strip() or None
+                    incluir = bool(row["Incluir na Lista"])
+                    qtd_sug, item_nome = sug_map.get(lista_id, (0, str(lista_id)))
+                    if incluir and qtd_final != qtd_sug and not motivo:
+                        erros_salvar.append(
+                            f"**{item_nome}**: motivo obrigatório quando a quantidade "
+                            f"final ({qtd_final}) difere da sugerida ({qtd_sug})."
+                        )
+                if erros_salvar:
+                    for e in erros_salvar:
+                        st.error(e)
+                else:
+                    with SessionLocal() as _s:
+                        for _, row in edited_df.iterrows():
+                            lista_id = int(row["_id"])
+                            qtd_final = int(row["Qtd Final"])
+                            motivo = str(row["Motivo"]).strip() or None
+                            incluir = bool(row["Incluir na Lista"])
+                            if incluir:
+                                aprovar_item(_s, lista_id, qtd_final, motivo)
+                            else:
+                                remover_da_lista(_s, lista_id)
+                    st.success("Alterações salvas com sucesso.")
+                    st.rerun()
 
-with tab_comprar:
-    df_comprar = _snaps_to_df(comprar, item_data)
-    if df_comprar.empty:
-        empty_state("✅", "Nenhum item para comprar", "Todos os itens estão dentro dos limites.")
+        if pendencias:
+            section_title("Pendências — Itens Sem Parâmetros")
+            st.caption("Defina mínimo e ideal em Estoque → Editar Item e reconsolide.")
+            rows_pend = [
+                {
+                    "Item": x.item.nome if x.item else "—",
+                    "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                    "Estoque Atual": x.estoque_atual_snap,
+                    "Solicitado": x.total_solicitado,
+                }
+                for x in pendencias
+            ]
+            st.dataframe(pd.DataFrame(rows_pend), use_container_width=True, hide_index=True)
+
+        if sols_sem_cadastro:
+            section_title("Itens Solicitados Não Cadastrados")
+            st.caption("Cadastre os itens abaixo em Estoque antes de incluí-los na consolidação.")
+            rows_nc = [
+                {
+                    "Nome informado": info["item_nome"],
+                    "Quantidade": info["quantidade"],
+                    "Solicitante": info["solicitante"],
+                    "Setor": info["setor_nome"],
+                }
+                for info in sols_sem_cadastro
+            ]
+            st.dataframe(pd.DataFrame(rows_nc), use_container_width=True, hide_index=True)
+
+        if not principais and not pendencias and not sols_sem_cadastro:
+            empty_state("✅", "Todos os itens estão com estoque adequado para o período.")
+
+# =============================================================================
+# ABA 3 — LISTA FINAL
+# =============================================================================
+else:
+    with SessionLocal() as _s:
+        lista_final = get_lista_final(_s, periodo)
+        lista_final_info = [
+            {
+                "id": x.id,
+                "item_nome": x.item.nome if x.item else "—",
+                "categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                "qtd_sugerida": x.quantidade_sugerida,
+                "qtd_final": (
+                    x.quantidade_final_definida
+                    if x.quantidade_final_definida is not None
+                    else x.quantidade_sugerida
+                ),
+                "motivo": x.motivo or "—",
+                "fornecedor": x.fornecedor_sugerido.nome if x.fornecedor_sugerido else "—",
+                "valor_est": x.valor_estimado,
+            }
+            for x in lista_final
+        ]
+
+    if not lista_final_info:
+        empty_state(
+            "✅",
+            "Lista final vazia",
+            f"Aprove itens na aba 'Consolidação' para montar a lista de {periodo_label}.",
+        )
     else:
-        st.dataframe(df_comprar, use_container_width=True, hide_index=True)
-        _gerar_doc_compras(df_comprar)
+        st.markdown(
+            f"**{len(lista_final_info)} item(ns) aprovado(s) para orçamento — {periodo_label}**"
+        )
 
-with tab_zerado:
-    df_zerado = _snaps_to_df(zerados, item_data)
-    if df_zerado.empty:
-        empty_state("✅", "Nenhum item zerado")
-    else:
-        st.dataframe(df_zerado, use_container_width=True, hide_index=True)
+        rows_final = [
+            {
+                "Item": info["item_nome"],
+                "Categoria": info["categoria"],
+                "Qtd Sugerida": info["qtd_sugerida"],
+                "Qtd Final": info["qtd_final"],
+                "Motivo": info["motivo"],
+                "Fornecedor": info["fornecedor"],
+                "Valor Est.": fmt_brl(info["valor_est"]) if info["valor_est"] else "—",
+            }
+            for info in lista_final_info
+        ]
+        st.dataframe(pd.DataFrame(rows_final), use_container_width=True, hide_index=True)
 
-with tab_ok:
-    df_ok = _snaps_to_df(ok, item_data)
-    if df_ok.empty:
-        empty_state("📋", "Nenhum item com status OK")
-    else:
-        st.dataframe(df_ok, use_container_width=True, hide_index=True)
+        total_est = sum(i["valor_est"] for i in lista_final_info if i["valor_est"])
+        if total_est:
+            st.metric("Valor total estimado", fmt_brl(total_est))
 
-with tab_sem_min:
-    df_sem = _snaps_to_df(sem_minimo, item_data)
-    if df_sem.empty:
-        empty_state("✅", "Todos os itens têm limites definidos")
-    else:
-        st.dataframe(df_sem, use_container_width=True, hide_index=True)
-        st.caption("Acesse **Estoque → Editar → Itens** para definir os valores mínimo e ideal.")
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        try:
+            from documents.lista_compras import gerar_lista_compras
+            if st.button("📄 Exportar Lista (.docx)", type="secondary"):
+                path = gerar_lista_compras(pd.DataFrame(rows_final))
+                with open(path, "rb") as f:
+                    st.download_button(
+                        label="⬇ Baixar Lista de Compras",
+                        data=f.read(),
+                        file_name=path.name,
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument"
+                            ".wordprocessingml.document"
+                        ),
+                    )
+        except ImportError:
+            st.caption("Módulo de exportação DOCX ainda não disponível.")
