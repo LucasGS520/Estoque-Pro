@@ -1,7 +1,7 @@
 """ Tela da camada de Compras — governança da necessidade de compra.
 
-Fluxo: seleção de período → consolidar → revisar painel → validar análise → lista final.
-Os pedidos de compra dos setores são registrados na página "Pedido de Compra".
+Fluxo: seleção de período → solicitações (formulário externo /solicitar) →
+classificar → consolidar → revisar painel → lista final.
 """
 
 import datetime
@@ -13,6 +13,7 @@ from core.database import get_session_factory
 from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
 from services.compras_service import (
     aprovar_item,
+    classificar_solicitacoes_periodo,
     consolidar_periodo,
     deletar_solicitacao,
     get_consolidacao_periodo,
@@ -147,7 +148,7 @@ with SessionLocal() as _s:
 # ── Navegação por abas ────────────────────────────────────────────────────────
 aba = st.radio(
     "Navegação",
-    ["Painel de Reposição", "Consolidação", "Lista Final"],
+    ["Painel de Reposição", "Solicitações", "Consolidação", "Lista Final"],
     horizontal=True,
     label_visibility="collapsed",
     key="compras_aba",
@@ -253,7 +254,119 @@ if aba == "Painel de Reposição":
                 st.caption("Itens com estoque acima de 1,5× o ideal. Não entram na lista de compras.")
 
 # =============================================================================
-# ABA 2 — CONSOLIDAÇÃO
+# ABA 2 — SOLICITAÇÕES
+# =============================================================================
+elif aba == "Solicitações":
+
+    # ── Seção A: link do formulário externo ──────────────────────────────────
+    st.info(
+        "**Formulário de Solicitação Externa** — Compartilhe o link abaixo com os setores:\n\n"
+        "`http://localhost:8501/solicitar`",
+        icon="🔗",
+    )
+
+    st.markdown("---")
+
+    # ── Seção B: classificar solicitações recebidas ──────────────────────────
+    section_title("Solicitações Recebidas")
+
+    with SessionLocal() as _s:
+        todas_sols = listar_solicitacoes(_s, periodo)
+
+    contagem = {
+        "pendente":                sum(1 for s in todas_sols if s.status == "pendente"),
+        "validada":                sum(1 for s in todas_sols if s.status == "validada"),
+        "pendente_cadastro":       sum(1 for s in todas_sols if s.status == "pendente_cadastro"),
+        "pendente_parametrizacao": sum(1 for s in todas_sols if s.status == "pendente_parametrizacao"),
+    }
+
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    col_m1.metric("⏳ Pendentes",        contagem["pendente"])
+    col_m2.metric("✅ Validadas",         contagem["validada"])
+    col_m3.metric("🆕 Novos Itens",       contagem["pendente_cadastro"])
+    col_m4.metric("⚙️ Sem Parâmetros",    contagem["pendente_parametrizacao"])
+
+    if contagem["pendente"] > 0:
+        if st.button("⚡ Classificar Solicitações Pendentes", type="primary"):
+            with SessionLocal() as _s:
+                resultado = classificar_solicitacoes_periodo(_s, periodo)
+            st.success(
+                f"Classificação concluída — "
+                f"**{resultado['validadas']}** validada(s) · "
+                f"**{resultado['pendente_cadastro']}** novo(s) item(ns) · "
+                f"**{resultado['pendente_parametrizacao']}** sem parâmetro."
+            )
+            st.rerun()
+    elif todas_sols:
+        st.caption("Todas as solicitações do período já foram classificadas.")
+    else:
+        st.caption(f"Nenhuma solicitação recebida para {periodo_label}.")
+
+    # ── Seção C: tabelas por status ──────────────────────────────────────────
+    if todas_sols:
+        st.markdown("---")
+        section_title("Detalhe por Status")
+
+        validadas_sols   = [s for s in todas_sols if s.status == "validada"]
+        novos_sols       = [s for s in todas_sols if s.status == "pendente_cadastro"]
+        sem_param_sols   = [s for s in todas_sols if s.status == "pendente_parametrizacao"]
+        pendentes_sols   = [s for s in todas_sols if s.status == "pendente"]
+
+        def _cabecalho_sol():
+            c1, c2, c3, c4, c5, _ = st.columns([3, 2, 1, 2, 2, 1])
+            c1.caption("Item")
+            c2.caption("Categoria")
+            c3.caption("Qtd")
+            c4.caption("Setor")
+            c5.caption("Solicitante")
+
+        def _render_sols(sols: list, prefixo: str) -> None:
+            _cabecalho_sol()
+            for sol in sols:
+                nome_item = sol.item.nome if sol.item else (sol.nome_item_livre or "—")
+                cat       = sol.item.categoria.nome if sol.item and sol.item.categoria else "—"
+                setor_n   = sol.setor.nome if sol.setor else "—"
+                c1, c2, c3, c4, c5, c_rm = st.columns([3, 2, 1, 2, 2, 1])
+                c1.markdown(f"**{nome_item}**")
+                c2.markdown(
+                    f"<span style='color:rgba(235,235,235,0.55);font-size:13px;'>{cat}</span>",
+                    unsafe_allow_html=True,
+                )
+                c3.markdown(str(sol.quantidade_solicitada))
+                c4.markdown(
+                    f"<span style='color:rgba(235,235,235,0.55);font-size:13px;'>{setor_n}</span>",
+                    unsafe_allow_html=True,
+                )
+                c5.markdown(
+                    f"<span style='color:rgba(235,235,235,0.55);font-size:13px;'>{sol.solicitante}</span>",
+                    unsafe_allow_html=True,
+                )
+                if c_rm.button("✕", key=f"del_sol_{prefixo}_{sol.id}", help="Remover solicitação"):
+                    with SessionLocal() as _s:
+                        deletar_solicitacao(_s, sol.id)
+                    st.rerun()
+
+        if validadas_sols:
+            with st.expander(f"✅  Validadas ({len(validadas_sols)}) — prontas para consolidação", expanded=True):
+                _render_sols(validadas_sols, "v")
+
+        if novos_sols:
+            with st.expander(f"🆕  Novos Itens ({len(novos_sols)}) — pendentes de cadastro"):
+                st.caption("Itens solicitados que não existem no catálogo. Avalie o cadastro em Estoque antes de consolidar.")
+                _render_sols(novos_sols, "n")
+
+        if sem_param_sols:
+            with st.expander(f"⚙️  Sem Parâmetros ({len(sem_param_sols)}) — sem mínimo/ideal definido"):
+                st.caption("Itens do catálogo sem estoque mínimo ou ideal configurados. Configure-os em Estoque para que entrem na consolidação.")
+                _render_sols(sem_param_sols, "p")
+
+        if pendentes_sols:
+            with st.expander(f"⏳  Pendentes de Classificação ({len(pendentes_sols)})"):
+                _render_sols(pendentes_sols, "pe")
+
+
+# =============================================================================
+# ABA 3 — CONSOLIDAÇÃO
 # =============================================================================
 elif aba == "Consolidação":
 
@@ -433,7 +546,7 @@ elif aba == "Consolidação":
             empty_state("✅", "Todos os itens estão com estoque adequado para o período.")
 
 # =============================================================================
-# ABA 3 — LISTA FINAL
+# ABA 4 — LISTA FINAL
 # =============================================================================
 else:
     with SessionLocal() as _s:

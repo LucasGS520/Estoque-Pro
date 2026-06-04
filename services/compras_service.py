@@ -144,6 +144,47 @@ def deletar_solicitacao(session: Session, sol_id: int) -> None:
         session.commit()
 
 
+def classificar_solicitacoes_periodo(
+    session: Session, periodo: datetime.date
+) -> dict[str, int]:
+    """Classifica solicitações pendentes do período, atualizando seus status.
+
+    - item_id presente + item tem mínimo e ideal → "validada"
+    - item_id presente + falta mínimo ou ideal   → "pendente_parametrizacao"
+    - item_id ausente (nome livre)               → "pendente_cadastro"
+
+    Retorna contagens por status: {validadas, pendente_cadastro, pendente_parametrizacao}.
+    """
+    pendentes = (
+        session.query(SolicitacaoMaterial)
+        .filter(
+            SolicitacaoMaterial.periodo_referencia == periodo,
+            SolicitacaoMaterial.status == "pendente",
+        )
+        .all()
+    )
+
+    contagens: dict[str, int] = {"validadas": 0, "pendente_cadastro": 0, "pendente_parametrizacao": 0}
+
+    for sol in pendentes:
+        if sol.item_id is None:
+            sol.status = "pendente_cadastro"
+            contagens["pendente_cadastro"] += 1
+        else:
+            item = session.get(Item, sol.item_id)
+            tem_minimo = item is not None and item.estoque_minimo_vigente is not None
+            tem_ideal = item is not None and item.estoque_ideal_vigente is not None
+            if tem_minimo and tem_ideal:
+                sol.status = "validada"
+                contagens["validadas"] += 1
+            else:
+                sol.status = "pendente_parametrizacao"
+                contagens["pendente_parametrizacao"] += 1
+
+    session.commit()
+    return contagens
+
+
 # ---------------------------------------------------------------------------
 # Consolidação do período
 # ---------------------------------------------------------------------------
@@ -165,11 +206,14 @@ def consolidar_periodo(
         .all()
     )
 
-    # Carrega e agrupa solicitações do período por item_id
+    # Carrega e agrupa somente solicitações validadas do período por item_id
     solicitacoes = (
         session.query(SolicitacaoMaterial)
         .options(joinedload(SolicitacaoMaterial.setor))
-        .filter(SolicitacaoMaterial.periodo_referencia == periodo)
+        .filter(
+            SolicitacaoMaterial.periodo_referencia == periodo,
+            SolicitacaoMaterial.status == "validada",
+        )
         .all()
     )
     sols_por_item: dict[int, list[SolicitacaoRecord]] = {}
