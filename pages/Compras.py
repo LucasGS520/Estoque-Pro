@@ -20,6 +20,7 @@ from services.compras_service import (
     deletar_solicitacao,
     get_consolidacao_periodo,
     get_lista_final,
+    get_painel_reposicao,
     get_periodos_com_consolidacao,
     listar_solicitacoes,
     remover_da_lista,
@@ -83,10 +84,12 @@ MESES_PT = {
 _STATUS_LABEL = {
     "zerado":              "Zerado",
     "abaixo_minimo":       "Abaixo do Mínimo",
-    "comprar":             "Comprar",
     "ok":                  "OK",
-    "sem_minimo_definido": "Sem Mínimo",
     "excesso":             "Excesso",
+    "sem_parametro":       "Sem Parâmetro",
+    # Legado (registros antigos na BD)
+    "comprar":             "Abaixo do Mínimo",
+    "sem_minimo_definido": "Sem Parâmetro",
 }
 
 # ── Seletor de período ────────────────────────────────────────────────────────
@@ -122,8 +125,9 @@ periodo_label = f"{MESES_PT[mes_sel]}/{ano_sel}"
 with SessionLocal() as _s:
     periodos_existentes = get_periodos_com_consolidacao(_s)
     itens_lista = get_consolidacao_periodo(_s, periodo)
+    painel_lista = get_painel_reposicao(_s)
     cats = get_categorias(_s)
-    cat_nomes = ["Todas"] + sorted({x.item.categoria.nome for x in itens_lista if x.item and x.item.categoria})
+    cat_nomes = ["Todas"] + sorted({r.categoria for r in painel_lista if r.categoria})
 
 _ultimo_dia = calendar.monthrange(ano_sel, mes_sel)[1]
 _janela_inicio = f"01/{mes_sel:02d}/{ano_sel}"
@@ -133,7 +137,7 @@ if periodo in periodos_existentes:
     _ultima_analise = max((x.atualizado_em for x in itens_lista), default=None)
     _n_total        = len(itens_lista)
     _n_comprar      = sum(1 for x in itens_lista if x.status in {"zerado", "abaixo_minimo", "comprar"})
-    _n_sem_min      = sum(1 for x in itens_lista if x.status == "sem_minimo_definido")
+    _n_sem_min      = sum(1 for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"})
     _n_lista_final  = sum(1 for x in itens_lista if x.incluir_na_lista_final)
     _data_str       = _ultima_analise.strftime("%d/%m/%Y às %H:%M") if _ultima_analise else "—"
     _sem_min_str    = f" · ⚠️ {_n_sem_min} sem mínimo/ideal" if _n_sem_min else ""
@@ -160,8 +164,7 @@ if consolidar:
         f"Análise de **{periodo_label}** concluída — "
         f"{summary.itens_zerados} zerado(s) · "
         f"{summary.itens_abaixo_minimo} abaixo do mínimo · "
-        f"{summary.itens_comprar} com solicitação ativa · "
-        f"{summary.itens_excesso} excesso"
+        f"{summary.itens_excesso} em excesso"
     )
     st.session_state["compras_aba"] = _aba_atual
     st.rerun()
@@ -180,31 +183,28 @@ aba = st.radio(
 # =============================================================================
 if aba == "Painel de Reposição":
 
-    if not itens_lista:
+    if not painel_lista:
         empty_state(
             "🛒",
-            "Sem dados para este período",
-            f"Clique em 'Análise Mensal de Compras' para gerar a análise de {periodo_label}.",
+            "Sem itens ativos no estoque",
+            "Cadastre itens em Estoque para visualizar o painel de reposição.",
         )
     else:
-        zerados      = [x for x in itens_lista if x.status == "zerado"]
-        abaixo_min   = [x for x in itens_lista if x.status == "abaixo_minimo"]
-        comprar_list = [x for x in itens_lista if x.status == "comprar"]
-        excesso_list = [x for x in itens_lista if x.status == "excesso"]
-        ok_list      = [x for x in itens_lista if x.status == "ok"]
-        sem_min      = [x for x in itens_lista if x.status == "sem_minimo_definido"]
+        zerados      = [r for r in painel_lista if r.status.value == "zerado"]
+        abaixo_min   = [r for r in painel_lista if r.status.value == "abaixo_minimo"]
+        excesso_list = [r for r in painel_lista if r.status.value == "excesso"]
+        ok_list      = [r for r in painel_lista if r.status.value == "ok"]
+        sem_param    = [r for r in painel_lista if r.status.value == "sem_parametro"]
 
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Zerados",        len(zerados))
-        c2.metric("Abaixo do Mín.", len(abaixo_min))
-        c3.metric("Comprar",        len(comprar_list))
-        c4.metric("Excesso",        len(excesso_list))
-        c5.metric("OK",             len(ok_list))
-        c6.metric("Sem Mínimo",     len(sem_min))
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Zerados",         len(zerados))
+        c2.metric("Abaixo do Mín.",  len(abaixo_min))
+        c3.metric("Excesso",         len(excesso_list))
+        c4.metric("OK",              len(ok_list))
+        c5.metric("Sem Parâmetro",   len(sem_param))
 
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
-        # Filtros — padrão Estoque.py
         section_title("Filtros")
         col_busca, col_cat, col_status = st.columns([3, 2, 2])
         with col_busca:
@@ -216,63 +216,53 @@ if aba == "Painel de Reposição":
                 "Todos os alertas": None,
                 "Zerado": "zerado",
                 "Abaixo do Mínimo": "abaixo_minimo",
-                "Comprar": "comprar",
-                "Sem Mínimo": "sem_minimo_definido",
+                "Sem Parâmetro": "sem_parametro",
                 "OK": "ok",
             }
             status_sel = st.selectbox("Status", list(status_opcoes.keys()), key="painel_status")
 
-        # Tabela filtrada — exclui excesso (tem seção própria abaixo)
-        STATUS_PAINEL = {"zerado", "abaixo_minimo", "comprar", "sem_minimo_definido", "ok"}
-        itens_painel = [x for x in itens_lista if x.status in STATUS_PAINEL]
+        STATUS_PAINEL = {"zerado", "abaixo_minimo", "sem_parametro", "ok"}
+        itens_painel = [r for r in painel_lista if r.status.value in STATUS_PAINEL]
 
-        # Aplicar filtros
         busca_lower = busca.strip().lower()
         status_code = status_opcoes[status_sel]
         if status_code:
-            itens_painel = [x for x in itens_painel if x.status == status_code]
+            itens_painel = [r for r in itens_painel if r.status.value == status_code]
         if cat_sel != "Todas":
-            itens_painel = [
-                x for x in itens_painel
-                if x.item and x.item.categoria and x.item.categoria.nome == cat_sel
-            ]
+            itens_painel = [r for r in itens_painel if r.categoria == cat_sel]
         if busca_lower:
-            itens_painel = [
-                x for x in itens_painel
-                if x.item and busca_lower in x.item.nome.lower()
-            ]
+            itens_painel = [r for r in itens_painel if busca_lower in r.nome.lower()]
 
         if not itens_painel:
             empty_state("✅", "Nenhum item encontrado para os filtros selecionados.")
         else:
             rows = []
-            for x in itens_painel:
+            for r in itens_painel:
                 rows.append({
-                    "Status": _STATUS_LABEL.get(x.status, x.status),
-                    "Item": x.item.nome if x.item else "—",
-                    "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
-                    "Estoque": x.estoque_atual_snap,
-                    "Mínimo": x.estoque_minimo_snap,
-                    "Ideal": x.estoque_ideal_snap,
-                    "Solicitado": x.total_solicitado,
-                    "Qtd Sugerida": x.quantidade_sugerida,
-                    "Fornecedor": x.fornecedor_sugerido.nome if x.fornecedor_sugerido else "—",
-                    "Valor Est.": fmt_brl(x.valor_estimado) if x.valor_estimado else "—",
+                    "Status": _STATUS_LABEL.get(r.status.value, r.status.value),
+                    "Item": r.nome,
+                    "Categoria": r.categoria,
+                    "Estoque": r.qtd_atual,
+                    "Mínimo": r.estoque_minimo,
+                    "Ideal": r.estoque_ideal,
+                    "Qtd Sugerida": r.quantidade_recomendar,
+                    "Fornecedor": r.fornecedor_sugerido or "—",
+                    "Valor Est.": fmt_brl(r.valor_estimado) if r.valor_estimado else "—",
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         if excesso_list:
             with st.expander(f"⚠️ {len(excesso_list)} item(ns) com excesso de estoque"):
                 rows_exc = []
-                for x in excesso_list:
+                for r in excesso_list:
                     rows_exc.append({
-                        "Item": x.item.nome if x.item else "—",
-                        "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
-                        "Estoque": x.estoque_atual_snap,
-                        "Ideal": x.estoque_ideal_snap,
+                        "Item": r.nome,
+                        "Categoria": r.categoria,
+                        "Estoque": r.qtd_atual,
+                        "Ideal": r.estoque_ideal,
                     })
                 st.dataframe(pd.DataFrame(rows_exc), use_container_width=True, hide_index=True)
-                st.caption("Itens com estoque acima de 1,5× o ideal. Não entram na lista de compras.")
+                st.caption("Itens com estoque acima do ideal. Não entram na lista de compras.")
 
 # =============================================================================
 # ABA 2 — SOLICITAÇÕES
@@ -291,13 +281,14 @@ elif aba == "Solicitações e Pendências":
     # ── Auto-classificação: processar pendentes antes de exibir ──────────────
     with SessionLocal() as _s:
         _raw = listar_solicitacoes(_s, periodo)
-        if any(s.status in {"pendente", "pendente_parametrizacao"} for s in _raw):
+        if any(s.status in {
+            "pendente", "sem_parametros", "novo_item",
+            "pendente_parametrizacao", "pendente_cadastro",  # legado
+        } for s in _raw):
             classificar_solicitacoes_periodo(_s, periodo)
         todas_sols = listar_solicitacoes(_s, periodo)
 
-    sem_min_sols = [x for x in itens_lista if x.status == "sem_minimo_definido"]
-
-    if not todas_sols and not sem_min_sols:
+    if not todas_sols:
         empty_state("📝", "Nenhuma pendência", f"Nenhuma solicitação ou item sem parâmetros para {periodo_label}.")
     else:
         # ── Agrupamento por (setor, solicitante) ──────────────────────────────
@@ -310,11 +301,8 @@ elif aba == "Solicitações e Pendências":
         # ── KPIs ──────────────────────────────────────────────────────────────
         n_formularios = len(grupos)
         n_prontos     = sum(1 for s in todas_sols if s.status == "validada")
-        n_novos       = sum(1 for s in todas_sols if s.status == "pendente_cadastro")
-        n_sem_param   = (
-            sum(1 for s in todas_sols if s.status == "pendente_parametrizacao")
-            + len(sem_min_sols)
-        )
+        n_novos       = sum(1 for s in todas_sols if s.status in {"novo_item", "pendente_cadastro"})
+        n_sem_param   = sum(1 for s in todas_sols if s.status in {"sem_parametros", "pendente_parametrizacao"})
 
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         col_m1.metric("📋 Formulários recebidos", n_formularios)
@@ -326,8 +314,10 @@ elif aba == "Solicitações e Pendências":
         _STATUS_BADGE_MAP = {
             "validada":                ("✅ Validada",       "#28a745"),
             "pendente":                ("⏳ Pendente",       "#6c757d"),
-            "pendente_cadastro":       ("🆕 Novo Item",      "#fd7e14"),
-            "pendente_parametrizacao": ("⚙️ Sem Parâmetros", "#6f42c1"),
+            "novo_item":               ("🆕 Novo Item",      "#fd7e14"),
+            "sem_parametros":          ("⚙️ Sem Parâmetros", "#6f42c1"),
+            "pendente_cadastro":       ("🆕 Novo Item",      "#fd7e14"),       # legado
+            "pendente_parametrizacao": ("⚙️ Sem Parâmetros", "#6f42c1"),      # legado
         }
 
         def _badge(status: str) -> str:
@@ -340,8 +330,8 @@ elif aba == "Solicitações e Pendências":
         def _resumo_grupo(sols: list) -> str:
             partes = []
             n_v = sum(1 for s in sols if s.status == "validada")
-            n_n = sum(1 for s in sols if s.status == "pendente_cadastro")
-            n_s = sum(1 for s in sols if s.status == "pendente_parametrizacao")
+            n_n = sum(1 for s in sols if s.status in {"novo_item", "pendente_cadastro"})
+            n_s = sum(1 for s in sols if s.status in {"sem_parametros", "pendente_parametrizacao"})
             n_p = sum(1 for s in sols if s.status == "pendente")
             if n_v: partes.append(f"✅ {n_v} pronto(s)")
             if n_n: partes.append(f"🆕 {n_n} novo(s)")
@@ -403,12 +393,12 @@ elif aba == "Solicitações e Pendências":
                                 if item_lc:
                                     aprovar_item(_s, item_lc.id, item_lc.quantidade_sugerida)
                             st.rerun()
-                    elif sol.status == "pendente_cadastro":
+                    elif sol.status in {"novo_item", "pendente_cadastro"}:
                         if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque → Editar → Itens', use_container_width=True):
                             st.session_state["estoque_tab"] = "Editar"
                             st.session_state["estoque_subtab"] = "Itens"
                             st.switch_page("pages/Estoque.py")
-                    elif sol.status == "pendente_parametrizacao":
+                    elif sol.status in {"sem_parametros", "pendente_parametrizacao"}:
                         if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque → Editar → Itens', use_container_width=True):
                             st.session_state["estoque_tab"] = "Editar"
                             st.session_state["estoque_subtab"] = "Itens"
@@ -450,7 +440,10 @@ elif aba == "Consolidação":
     with SessionLocal() as _s_conso:
         _sols_conso = listar_solicitacoes(_s_conso, periodo)
     _n_sols_pendentes = sum(
-        1 for s in _sols_conso if s.status in {"pendente_cadastro", "pendente_parametrizacao"}
+        1 for s in _sols_conso if s.status in {
+            "novo_item", "sem_parametros",
+            "pendente_cadastro", "pendente_parametrizacao",  # legado
+        }
     )
 
     # ── Tabela de consolidação ────────────────────────────────────────────────
@@ -463,14 +456,14 @@ elif aba == "Consolidação":
     else:
         STATUS_ATIVOS = {"zerado", "abaixo_minimo", "comprar"}
 
-        principais   = [x for x in itens_lista if x.status in STATUS_ATIVOS]
-        sem_min_conso = [x for x in itens_lista if x.status == "sem_minimo_definido"]
+        principais    = [x for x in itens_lista if x.status in STATUS_ATIVOS]
+        sem_param_conso = [x for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"}]
 
         if principais:
             section_title("Itens para Decisão de Compra")
             _avisos_conso = []
-            if sem_min_conso:
-                _avisos_conso.append(f"{len(sem_min_conso)} item(ns) sem mínimo/ideal")
+            if sem_param_conso:
+                _avisos_conso.append(f"{len(sem_param_conso)} item(ns) sem parâmetros")
             if _n_sols_pendentes:
                 _avisos_conso.append(f"{_n_sols_pendentes} solicitação(ões) pendente(s)")
             if _avisos_conso:
@@ -562,10 +555,10 @@ elif aba == "Consolidação":
                     st.rerun()
 
         if not principais:
-            if sem_min_conso:
+            if sem_param_conso:
                 st.warning(
-                    f"**{len(sem_min_conso)} item sem mínimo/ideal definido** — o motor não pôde analisar a necessidade de compra destes itens.  \n"
-                    f"Configure os parâmetros em **Solicitações e Pendências** e rode novamente a **Análise Mensal de Compras**.",
+                    f"**{len(sem_param_conso)} item sem parâmetros definidos** — o motor não pôde analisar a necessidade de compra destes itens.  \n"
+                    f"Configure mínimo/ideal em **Estoque** e rode novamente a **Análise Mensal de Compras**.",
                     icon="⚠️",
                 )
             elif _n_sols_pendentes:

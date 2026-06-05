@@ -93,6 +93,23 @@ def get_purchase_list(session: Session) -> list[SnapshotAnalise]:
     )
 
 
+def get_painel_reposicao(session: Session) -> list[AnalysisResult]:
+    """Retorna análise pura de estoque (sem solicitações) para o Painel de Reposição.
+
+    Calculado em memória — sempre reflete o estado atual do estoque, sem precisar
+    de um botão de atualização. Não altera nenhuma tabela persistida.
+    """
+    itens = (
+        session.query(Item)
+        .options(joinedload(Item.categoria))
+        .filter(Item.ativo == True)  # noqa: E712
+        .all()
+    )
+    records = [_item_to_record(item, session) for item in itens]
+    analyzer = StockAnalyzer()
+    return analyzer.run_puro(records)
+
+
 # ---------------------------------------------------------------------------
 # Solicitações de materiais
 # ---------------------------------------------------------------------------
@@ -147,29 +164,33 @@ def deletar_solicitacao(session: Session, sol_id: int) -> None:
 def classificar_solicitacoes_periodo(
     session: Session, periodo: datetime.date
 ) -> dict[str, int]:
-    """Classifica solicitações pendentes do período, atualizando seus status.
+    """Classifica/reclassifica solicitações pendentes e não validadas do período.
 
-    - item_id presente + item tem mínimo e ideal → "validada"
-    - item_id presente + falta mínimo ou ideal   → "pendente_parametrizacao"
-    - item_id ausente (nome livre)               → "pendente_cadastro"
+    - item_id ausente (nome livre)                        → "novo_item"
+    - item_id presente + tem mínimo e ideal               → "validada"
+    - item_id presente + falta mínimo ou ideal (ou ambos) → "sem_parametros"
+    - "novo_item" com item_id preenchido (vinculação manual) → reclassificado acima
 
-    Retorna contagens por status: {validadas, pendente_cadastro, pendente_parametrizacao}.
+    Retorna contagens por status: {validadas, novo_item, sem_parametros}.
     """
     pendentes = (
         session.query(SolicitacaoMaterial)
         .filter(
             SolicitacaoMaterial.periodo_referencia == periodo,
-            SolicitacaoMaterial.status.in_(["pendente", "pendente_parametrizacao"]),
+            SolicitacaoMaterial.status.in_([
+                "pendente", "sem_parametros", "novo_item",
+                "pendente_parametrizacao", "pendente_cadastro",  # legado
+            ]),
         )
         .all()
     )
 
-    contagens: dict[str, int] = {"validadas": 0, "pendente_cadastro": 0, "pendente_parametrizacao": 0}
+    contagens: dict[str, int] = {"validadas": 0, "novo_item": 0, "sem_parametros": 0}
 
     for sol in pendentes:
         if sol.item_id is None:
-            sol.status = "pendente_cadastro"
-            contagens["pendente_cadastro"] += 1
+            sol.status = "novo_item"
+            contagens["novo_item"] += 1
         else:
             item = session.get(Item, sol.item_id)
             tem_minimo = item is not None and (item.estoque_minimo_vigente or 0) > 0
@@ -178,8 +199,8 @@ def classificar_solicitacoes_periodo(
                 sol.status = "validada"
                 contagens["validadas"] += 1
             else:
-                sol.status = "pendente_parametrizacao"
-                contagens["pendente_parametrizacao"] += 1
+                sol.status = "sem_parametros"
+                contagens["sem_parametros"] += 1
 
     session.commit()
     return contagens
@@ -308,8 +329,10 @@ def get_consolidacao_periodo(
 ) -> list[ItemListaCompra]:
     """Retorna todos os itens consolidados de um período, ordenados por status."""
     _STATUS_SORT = {
-        "zerado": 0, "comprar": 1, "abaixo_minimo": 2,
-        "sem_minimo_definido": 3, "excesso": 4, "ok": 5,
+        "zerado": 0, "abaixo_minimo": 1, "sem_parametro": 2,
+        "excesso": 3, "ok": 4,
+        # Legado (registros anteriores à migração)
+        "comprar": 1, "sem_minimo_definido": 2,
     }
     items = (
         session.query(ItemListaCompra)
