@@ -15,6 +15,9 @@ from core.database import get_session_factory
 from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
 from services.compras_service import (
     aprovar_item,
+    aprovar_solicitacao,
+    rejeitar_solicitacao,
+    revertir_solicitacao,
     classificar_solicitacoes_periodo,
     consolidar_periodo,
     deletar_solicitacao,
@@ -116,11 +119,27 @@ with col_ano:
         key="sel_ano",
         label_visibility="collapsed",
     )
-with col_btn:
-    consolidar = st.button("▶ Análise Mensal de Compras", type="primary", use_container_width=True)
+periodo           = datetime.date(ano_sel, mes_sel, 1)
+periodo_label     = f"{MESES_PT[mes_sel]}/{ano_sel}"
+_periodo_atual_ref = datetime.date(hoje.year, hoje.month, 1)
+_periodo_tipo     = (
+    "futuro"  if periodo > _periodo_atual_ref else
+    "passado" if periodo < _periodo_atual_ref else
+    "atual"
+)
+_btn_help = {
+    "futuro":  "Período futuro — selecione o mês atual para executar",
+    "passado": "Período encerrado — somente leitura",
+}.get(_periodo_tipo)
 
-periodo = datetime.date(ano_sel, mes_sel, 1)
-periodo_label = f"{MESES_PT[mes_sel]}/{ano_sel}"
+with col_btn:
+    consolidar = st.button(
+        "▶ Análise Mensal de Compras",
+        type="primary",
+        use_container_width=True,
+        disabled=(_periodo_tipo != "atual"),
+        help=_btn_help,
+    )
 
 with SessionLocal() as _s:
     periodos_existentes = get_periodos_com_consolidacao(_s)
@@ -129,11 +148,21 @@ with SessionLocal() as _s:
     cats = get_categorias(_s)
     cat_nomes = ["Todas"] + sorted({r.categoria for r in painel_lista if r.categoria})
 
-_ultimo_dia = calendar.monthrange(ano_sel, mes_sel)[1]
+_ultimo_dia    = calendar.monthrange(ano_sel, mes_sel)[1]
 _janela_inicio = f"01/{mes_sel:02d}/{ano_sel}"
-_janela_fim    = f"{_ultimo_dia:02d}/{mes_sel:02d}/{ano_sel}"
+_janela_fim    = (
+    f"hoje ({hoje.strftime('%d/%m/%Y')})"
+    if _periodo_tipo == "atual"
+    else f"{_ultimo_dia:02d}/{mes_sel:02d}/{ano_sel}"
+)
 
-if periodo in periodos_existentes:
+if _periodo_tipo == "futuro":
+    st.error(
+        f"🚫 **Período futuro** — não é possível executar análises para **{periodo_label}**. "
+        "Selecione o mês atual.",
+        icon="🚫",
+    )
+elif periodo in periodos_existentes:
     _ultima_analise = max((x.atualizado_em for x in itens_lista), default=None)
     _n_total        = len(itens_lista)
     _n_comprar      = sum(1 for x in itens_lista if x.status in {"zerado", "abaixo_minimo", "comprar"})
@@ -141,19 +170,23 @@ if periodo in periodos_existentes:
     _n_lista_final  = sum(1 for x in itens_lista if x.incluir_na_lista_final)
     _data_str       = _ultima_analise.strftime("%d/%m/%Y às %H:%M") if _ultima_analise else "—"
     _sem_min_str    = f" · ⚠️ {_n_sem_min} sem mínimo/ideal" if _n_sem_min else ""
+    _lock_str       = "  \n🔒 Período encerrado — somente leitura" if _periodo_tipo == "passado" else ""
     _banner_icon    = "⚠️" if _n_sem_min else "✅"
     st.info(
-        f"**Análise Mensal disponível — {periodo_label}**  \n"
+        f"**Análise Mensal — {periodo_label}**  \n"
         f"📅 Janela: {_janela_inicio} – {_janela_fim} · Última análise: {_data_str}  \n"
-        f"🔢 {_n_total} item(ns) analisado(s) · {_n_comprar} a comprar{_sem_min_str} · {_n_lista_final} aprovado(s) na lista final",
+        f"🔢 {_n_total} item(ns) analisado(s) · {_n_comprar} a comprar{_sem_min_str} · {_n_lista_final} aprovado(s) na lista final{_lock_str}",
         icon=_banner_icon,
     )
 else:
-    st.warning(
-        f"Nenhuma análise para **{periodo_label}** — clique em **Análise Mensal de Compras**."
-        f"  \n📅 Janela: {_janela_inicio} – {_janela_fim}",
-        icon="⚠️",
-    )
+    if _periodo_tipo == "passado":
+        st.info(f"Sem análise registrada para **{periodo_label}**.", icon="📋")
+    else:
+        st.warning(
+            f"Nenhuma análise para **{periodo_label}** — clique em **Análise Mensal de Compras**."
+            f"  \n📅 Janela: {_janela_inicio} – {_janela_fim}",
+            icon="⚠️",
+        )
 
 if consolidar:
     _aba_atual = st.session_state.get("compras_aba", "Painel de Reposição")
@@ -278,10 +311,16 @@ elif aba == "Solicitações e Pendências":
 
     st.markdown("---")
 
-    # ── Auto-classificação: processar pendentes antes de exibir ──────────────
+    _sol_readonly = (_periodo_tipo != "atual")
+    if _sol_readonly:
+        _lock_icon = "🚫" if _periodo_tipo == "futuro" else "🔒"
+        _lock_msg  = "Período futuro" if _periodo_tipo == "futuro" else "Período encerrado"
+        st.warning(f"{_lock_icon} {_lock_msg} — solicitações em modo somente leitura.", icon=_lock_icon)
+
+    # ── Auto-classificação: só executa no período atual ───────────────────────
     with SessionLocal() as _s:
         _raw = listar_solicitacoes(_s, periodo)
-        if any(s.status in {
+        if not _sol_readonly and any(s.status in {
             "pendente", "sem_parametros", "novo_item",
             "pendente_parametrizacao", "pendente_cadastro",  # legado
         } for s in _raw):
@@ -301,18 +340,31 @@ elif aba == "Solicitações e Pendências":
         # ── KPIs ──────────────────────────────────────────────────────────────
         n_formularios = len(grupos)
         n_prontos     = sum(1 for s in todas_sols if s.status == "validada")
+        n_aprovadas   = sum(1 for s in todas_sols if s.status == "aprovada")
+        n_rejeitadas  = sum(1 for s in todas_sols if s.status == "rejeitada")
         n_novos       = sum(1 for s in todas_sols if s.status in {"novo_item", "pendente_cadastro"})
         n_sem_param   = sum(1 for s in todas_sols if s.status in {"sem_parametros", "pendente_parametrizacao"})
 
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        col_m1.metric("📋 Formulários recebidos", n_formularios)
-        col_m2.metric("✅ Itens prontos",          n_prontos)
-        col_m3.metric("🆕 Novos Itens",            n_novos)
-        col_m4.metric("⚙️ Sem Parâmetros",         n_sem_param)
+        col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
+        col_m1.metric("📋 Formulários",      n_formularios)
+        col_m2.metric("⏳ Para revisar",     n_prontos)
+        col_m3.metric("✅ Aprovadas",        n_aprovadas)
+        col_m4.metric("❌ Rejeitadas",       n_rejeitadas)
+        col_m5.metric("🆕 Novos Itens",      n_novos)
+        col_m6.metric("⚙️ Sem Parâmetros",   n_sem_param)
+
+        if n_aprovadas > 0 and not _sol_readonly:
+            st.info(
+                f"✅ {n_aprovadas} solicitação(ões) aprovada(s) aguardando Consolidação. "
+                "Execute **Análise Mensal de Compras** para incluí-las.",
+                icon="ℹ️",
+            )
 
         # ── Helpers ───────────────────────────────────────────────────────────
         _STATUS_BADGE_MAP = {
-            "validada":                ("✅ Validada",       "#28a745"),
+            "validada":                ("⏳ Para Revisar",   "#17a2b8"),
+            "aprovada":                ("✅ Aprovada",       "#28a745"),
+            "rejeitada":               ("❌ Rejeitada",      "#dc3545"),
             "pendente":                ("⏳ Pendente",       "#6c757d"),
             "novo_item":               ("🆕 Novo Item",      "#fd7e14"),
             "sem_parametros":          ("⚙️ Sem Parâmetros", "#6f42c1"),
@@ -330,10 +382,14 @@ elif aba == "Solicitações e Pendências":
         def _resumo_grupo(sols: list) -> str:
             partes = []
             n_v = sum(1 for s in sols if s.status == "validada")
+            n_a = sum(1 for s in sols if s.status == "aprovada")
+            n_r = sum(1 for s in sols if s.status == "rejeitada")
             n_n = sum(1 for s in sols if s.status in {"novo_item", "pendente_cadastro"})
             n_s = sum(1 for s in sols if s.status in {"sem_parametros", "pendente_parametrizacao"})
             n_p = sum(1 for s in sols if s.status == "pendente")
-            if n_v: partes.append(f"✅ {n_v} pronto(s)")
+            if n_v: partes.append(f"⏳ {n_v} p/ revisar")
+            if n_a: partes.append(f"✅ {n_a} aprovado(s)")
+            if n_r: partes.append(f"❌ {n_r} rejeitado(s)")
             if n_n: partes.append(f"🆕 {n_n} novo(s)")
             if n_s: partes.append(f"⚙️ {n_s} sem parâm.")
             if n_p: partes.append(f"⏳ {n_p} pendente(s)")
@@ -347,29 +403,32 @@ elif aba == "Solicitações e Pendências":
             data_doc     = max(s.criado_em for s in sols).strftime("%d/%m/%Y")
             n_itens      = len(sols)
             resumo       = _resumo_grupo(sols)
-            tem_validada = any(s.status == "validada" for s in sols)
-            label_exp    = (
+            _PENDENTE_STATUS = {
+                "validada", "novo_item", "sem_parametros", "pendente",
+                "pendente_cadastro", "pendente_parametrizacao",
+            }
+            pendentes_grupo  = any(s.status in _PENDENTE_STATUS for s in sols)
+            aprovadas_grupo  = [s for s in sols if s.status == "aprovada"]
+            concluido        = not pendentes_grupo
+            sufixo_label     = "  · ✅ Concluído" if concluido else ""
+            label_exp        = (
                 f"🏢  {setor_nome}  ·  {solicitante}  ·  {data_doc}"
-                f"  —  {n_itens} item(ns)  ·  {resumo}"
+                f"  —  {n_itens} item(ns)  ·  {resumo}{sufixo_label}"
             )
 
             with st.expander(label_exp):
-                if not tem_validada:
-                    if st.button(
-                        "🗑 Excluir formulário completo",
-                        key=f"del_doc_{setor_nome}_{solicitante}",
-                        help="Remove todos os itens deste formulário",
-                    ):
-                        with SessionLocal() as _s:
-                            for sol in sols:
-                                deletar_solicitacao(_s, sol.id)
-                        st.rerun()
+                # ── Caption de estado ─────────────────────────────────────────
+                if concluido:
+                    st.caption("✅ Revisão concluída. Execute Análise Mensal para incluir as aprovações.")
                 else:
                     st.caption("⚠️ Revise cada item solicitado para uma aprovação mais precisa e confiável.")
 
                 st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
-                ch1, ch2, ch3, ch4, _, _ = st.columns([4, 1, 3, 2, 1, 1])
+                if _sol_readonly:
+                    ch1, ch2, ch3, ch4 = st.columns([4, 1, 3, 2])
+                else:
+                    ch1, ch2, ch3, ch4, _, _ = st.columns([4, 1, 3, 2, 1, 1])
                 ch1.caption("Item")
                 ch2.caption("Qtd")
                 ch3.caption("Observação")
@@ -378,57 +437,116 @@ elif aba == "Solicitações e Pendências":
                 for sol in sols:
                     nome_item = sol.item.nome if sol.item else (sol.nome_item_livre or "—")
                     obs       = sol.observacao or "—"
-                    c1, c2, c3, c4, c_acao, c_rm = st.columns([4, 1, 3, 2, 1, 1])
+                    if _sol_readonly:
+                        c1, c2, c3, c4 = st.columns([4, 1, 3, 2])
+                    else:
+                        c1, c2, c3, c4, c_acao, c_rm = st.columns([4, 1, 3, 2, 1, 1])
                     c1.markdown(f"**{nome_item}**")
                     c2.markdown(str(sol.quantidade_solicitada))
                     c3.caption(obs if obs != "—" else "")
                     c4.markdown(_badge(sol.status), unsafe_allow_html=True)
 
-                    if sol.status == "validada":
-                        if c_acao.button("✓", key=f"aceitar_sol_{sol.id}", help="Aceitar e aprovar para a lista de compras", use_container_width=True):
-                            with SessionLocal() as _s:
-                                consolidar_periodo(_s, periodo)
-                                itens_lc = get_consolidacao_periodo(_s, periodo)
-                                item_lc = next((x for x in itens_lc if x.item_id == sol.item_id), None)
-                                if item_lc:
-                                    aprovar_item(_s, item_lc.id, item_lc.quantidade_sugerida)
-                            st.rerun()
-                    elif sol.status in {"novo_item", "pendente_cadastro"}:
-                        if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque → Editar → Itens', use_container_width=True):
-                            st.session_state["estoque_tab"] = "Editar"
-                            st.session_state["estoque_subtab"] = "Itens"
-                            st.switch_page("pages/Estoque.py")
-                    elif sol.status in {"sem_parametros", "pendente_parametrizacao"}:
-                        if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque → Editar → Itens', use_container_width=True):
-                            st.session_state["estoque_tab"] = "Editar"
-                            st.session_state["estoque_subtab"] = "Itens"
-                            st.switch_page("pages/Estoque.py")
+                    if not _sol_readonly:
+                        if sol.status == "validada":
+                            if c_acao.button("✓", key=f"aceitar_sol_{sol.id}", help="Aprovar esta solicitação", use_container_width=True):
+                                with SessionLocal() as _s:
+                                    aprovar_solicitacao(_s, sol.id)
+                                st.rerun()
+                            if c_rm.button("✗", key=f"rejeitar_sol_{sol.id}", help="Rejeitar esta solicitação", use_container_width=True):
+                                with SessionLocal() as _s:
+                                    rejeitar_solicitacao(_s, sol.id)
+                                st.rerun()
+                        elif sol.status in {"aprovada", "rejeitada"}:
+                            if c_acao.button("↩", key=f"desfazer_sol_{sol.id}", help="Desfazer — reverter para revisão", use_container_width=True):
+                                with SessionLocal() as _s:
+                                    revertir_solicitacao(_s, sol.id)
+                                st.rerun()
+                            if c_rm.button("🗑️", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
+                                with SessionLocal() as _s:
+                                    deletar_solicitacao(_s, sol.id)
+                                st.rerun()
+                        else:
+                            if sol.status in {"novo_item", "pendente_cadastro"}:
+                                if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque → Editar → Itens', use_container_width=True):
+                                    st.session_state["estoque_tab"] = "Editar"
+                                    st.session_state["estoque_subtab"] = "Itens"
+                                    st.switch_page("pages/Estoque.py")
+                            elif sol.status in {"sem_parametros", "pendente_parametrizacao"}:
+                                if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque → Editar → Itens', use_container_width=True):
+                                    st.session_state["estoque_tab"] = "Editar"
+                                    st.session_state["estoque_subtab"] = "Itens"
+                                    st.switch_page("pages/Estoque.py")
+                            if c_rm.button("🗑️", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
+                                with SessionLocal() as _s:
+                                    deletar_solicitacao(_s, sol.id)
+                                st.rerun()
 
-                    if c_rm.button("✕", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
-                        with SessionLocal() as _s:
-                            deletar_solicitacao(_s, sol.id)
-                        st.rerun()
+                # ── Ações do formulário (apenas no período atual) ─────────────
+                if not _sol_readonly:
+                    validadas_grupo  = [s for s in sols if s.status == "validada"]
+                    _confirm_key     = f"confirm_del_{setor_nome}_{solicitante}"
+                    _aguard_confirm  = st.session_state.get(_confirm_key, False)
 
-                # ── Aprovação por formulário ───────────────────────────────────
-                validadas_grupo = [s for s in sols if s.status == "validada"]
-                if validadas_grupo:
                     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-                    col_apr_doc, _ = st.columns([2, 4])
+                    col_apr_doc, col_del_doc, _ = st.columns([2, 2, 2])
+
                     with col_apr_doc:
-                        if st.button(
-                            f"Aprovar Pedidos",
-                            key=f"apr_doc_{setor_nome}_{solicitante}",
+                        if validadas_grupo:
+                            if st.button(
+                                "Aprovar Pedidos",
+                                key=f"apr_doc_{setor_nome}_{solicitante}",
+                                type="primary",
+                                use_container_width=True,
+                                help="Aprova todos os itens validados deste formulário",
+                            ):
+                                with SessionLocal() as _s:
+                                    for sol_v in validadas_grupo:
+                                        aprovar_solicitacao(_s, sol_v.id)
+                                st.rerun()
+                        elif aprovadas_grupo:
+                            st.success("✅ Pedidos aprovados")
+
+                    with col_del_doc:
+                        if not _aguard_confirm:
+                            if st.button(
+                                "🗑 Excluir Formulário",
+                                key=f"del_doc_{setor_nome}_{solicitante}",
+                                use_container_width=True,
+                                help="Remove todos os itens deste formulário permanentemente",
+                            ):
+                                st.session_state[_confirm_key] = True
+                                st.rerun()
+                        else:
+                            st.caption("▼ Confirme abaixo")
+
+                    if _aguard_confirm:
+                        n_total = len(sols)
+                        n_aprov = len(aprovadas_grupo)
+                        _aviso  = (
+                            f"Esta ação removerá **{n_total} item(ns)** permanentemente "
+                            "e **não poderá ser desfeita**."
+                        )
+                        if n_aprov:
+                            _aviso += f" **{n_aprov} item(ns) aprovado(s) serão perdidos.**"
+                        st.warning(_aviso, icon="⚠️")
+                        c_conf, c_canc, _ = st.columns([2, 2, 2])
+                        if c_conf.button(
+                            "Sim, excluir tudo",
+                            key=f"confirm_yes_{setor_nome}_{solicitante}",
                             type="primary",
                             use_container_width=True,
-                            help="Aprova todos os itens validados deste formulário para a lista de compras",
                         ):
                             with SessionLocal() as _s:
-                                consolidar_periodo(_s, periodo)
-                                itens_lc = get_consolidacao_periodo(_s, periodo)
-                                for sol_v in validadas_grupo:
-                                    item_lc = next((x for x in itens_lc if x.item_id == sol_v.item_id), None)
-                                    if item_lc:
-                                        aprovar_item(_s, item_lc.id, item_lc.quantidade_sugerida)
+                                for sol in sols:
+                                    deletar_solicitacao(_s, sol.id)
+                            st.session_state.pop(_confirm_key, None)
+                            st.rerun()
+                        if c_canc.button(
+                            "Cancelar",
+                            key=f"confirm_no_{setor_nome}_{solicitante}",
+                            use_container_width=True,
+                        ):
+                            st.session_state[_confirm_key] = False
                             st.rerun()
 
 
@@ -436,6 +554,19 @@ elif aba == "Solicitações e Pendências":
 # ABA 3 — CONSOLIDAÇÃO
 # =============================================================================
 elif aba == "Consolidação":
+
+    if _periodo_tipo == "futuro":
+        empty_state(
+            "🚫",
+            "Período futuro",
+            "Não é possível analisar ou visualizar consolidações de períodos futuros. "
+            "Selecione o mês atual.",
+        )
+        st.stop()
+
+    _consolidacao_readonly = (_periodo_tipo == "passado")
+    if _consolidacao_readonly:
+        st.info("🔒 Período encerrado — visualização somente leitura.", icon="🔒")
 
     with SessionLocal() as _s_conso:
         _sols_conso = listar_solicitacoes(_s_conso, periodo)
@@ -512,15 +643,23 @@ elif aba == "Consolidação":
                 "Motivo":         st.column_config.TextColumn("Motivo", width="large"),
                 "Incluir na Lista": st.column_config.CheckboxColumn("Incluir na Lista", width="small"),
             }
-            edited_df = st.data_editor(
-                df_ed,
-                column_config=col_config,
-                hide_index=True,
-                use_container_width=True,
-                key="consolidacao_editor",
-            )
+            if _consolidacao_readonly:
+                st.dataframe(
+                    df_ed,
+                    column_config=col_config,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            else:
+                edited_df = st.data_editor(
+                    df_ed,
+                    column_config=col_config,
+                    hide_index=True,
+                    use_container_width=True,
+                    key="consolidacao_editor",
+                )
 
-            if st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
+            if not _consolidacao_readonly and st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
                 sug_map = {
                     x.id: (x.quantidade_sugerida, x.item.nome if x.item else str(x.id))
                     for x in principais

@@ -161,6 +161,59 @@ def deletar_solicitacao(session: Session, sol_id: int) -> None:
         session.commit()
 
 
+def aprovar_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
+    """Marca a solicitação como aprovada pelo responsável (status → 'aprovada').
+
+    Apenas solicitações com status 'validada' podem ser aprovadas.
+    Solicitações aprovadas entram na próxima consolidação de período.
+    """
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    if sol.status != "validada":
+        raise ValueError(
+            f"Só é possível aprovar solicitações com status 'validada'. "
+            f"Status atual: '{sol.status}'"
+        )
+    sol.status = "aprovada"
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
+def rejeitar_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
+    """Marca a solicitação como rejeitada pelo responsável (status → 'rejeitada').
+
+    Solicitações rejeitadas não entram na consolidação de período.
+    """
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    sol.status = "rejeitada"
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
+def revertir_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
+    """Reverte uma solicitação aprovada ou rejeitada de volta para 'validada'.
+
+    Permite desfazer uma aprovação ou rejeição antes da consolidação ser executada.
+    """
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    if sol.status not in {"aprovada", "rejeitada"}:
+        raise ValueError(
+            f"Só é possível reverter solicitações com status 'aprovada' ou 'rejeitada'. "
+            f"Status atual: '{sol.status}'"
+        )
+    sol.status = "validada"
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
 def classificar_solicitacoes_periodo(
     session: Session, periodo: datetime.date
 ) -> dict[str, int]:
@@ -178,6 +231,8 @@ def classificar_solicitacoes_periodo(
         .filter(
             SolicitacaoMaterial.periodo_referencia == periodo,
             SolicitacaoMaterial.status.in_([
+                # "aprovada" e "rejeitada" são intencionalmente omitidas:
+                # decisão humana já tomada, não deve ser sobrescrita.
                 "pendente", "sem_parametros", "novo_item",
                 "pendente_parametrizacao", "pendente_cadastro",  # legado
             ]),
@@ -227,13 +282,13 @@ def consolidar_periodo(
         .all()
     )
 
-    # Carrega e agrupa somente solicitações validadas do período por item_id
+    # Carrega e agrupa somente solicitações aprovadas pelo responsável
     solicitacoes = (
         session.query(SolicitacaoMaterial)
         .options(joinedload(SolicitacaoMaterial.setor))
         .filter(
             SolicitacaoMaterial.periodo_referencia == periodo,
-            SolicitacaoMaterial.status == "validada",
+            SolicitacaoMaterial.status == "aprovada",
         )
         .all()
     )
