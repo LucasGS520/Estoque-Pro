@@ -5,6 +5,7 @@ classificar → consolidar → revisar painel → lista final.
 """
 
 import datetime
+from collections import defaultdict
 
 import pandas as pd
 import streamlit as st
@@ -22,6 +23,7 @@ from services.compras_service import (
     listar_solicitacoes,
     remover_da_lista,
 )
+from documents.lista_compras import gerar_lista_compras
 from services.estoque_service import get_categorias
 
 setup_page("Compras", "🛒")
@@ -148,7 +150,7 @@ with SessionLocal() as _s:
 # ── Navegação por abas ────────────────────────────────────────────────────────
 aba = st.radio(
     "Navegação",
-    ["Painel de Reposição", "Solicitações", "Consolidação", "Lista Final"],
+    ["Painel de Reposição", "Solicitações e Pendências", "Consolidação"],
     horizontal=True,
     label_visibility="collapsed",
     key="compras_aba",
@@ -256,9 +258,9 @@ if aba == "Painel de Reposição":
 # =============================================================================
 # ABA 2 — SOLICITAÇÕES
 # =============================================================================
-elif aba == "Solicitações":
+elif aba == "Solicitações e Pendências":
 
-    # ── Seção A: link do formulário externo ──────────────────────────────────
+    # ── Link do formulário externo ────────────────────────────────────────────
     st.info(
         "**Formulário de Solicitação Externa** — Compartilhe o link abaixo com os setores:\n\n"
         "`http://localhost:8501/solicitar`",
@@ -267,102 +269,148 @@ elif aba == "Solicitações":
 
     st.markdown("---")
 
-    # ── Seção B: classificar solicitações recebidas ──────────────────────────
-    section_title("Solicitações Recebidas")
-
+    # ── Auto-classificação: processar pendentes antes de exibir ──────────────
     with SessionLocal() as _s:
+        _raw = listar_solicitacoes(_s, periodo)
+        if any(s.status == "pendente" for s in _raw):
+            classificar_solicitacoes_periodo(_s, periodo)
         todas_sols = listar_solicitacoes(_s, periodo)
 
-    contagem = {
-        "pendente":                sum(1 for s in todas_sols if s.status == "pendente"),
-        "validada":                sum(1 for s in todas_sols if s.status == "validada"),
-        "pendente_cadastro":       sum(1 for s in todas_sols if s.status == "pendente_cadastro"),
-        "pendente_parametrizacao": sum(1 for s in todas_sols if s.status == "pendente_parametrizacao"),
-    }
-
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("⏳ Pendentes",        contagem["pendente"])
-    col_m2.metric("✅ Validadas",         contagem["validada"])
-    col_m3.metric("🆕 Novos Itens",       contagem["pendente_cadastro"])
-    col_m4.metric("⚙️ Sem Parâmetros",    contagem["pendente_parametrizacao"])
-
-    if contagem["pendente"] > 0:
-        if st.button("⚡ Classificar Solicitações Pendentes", type="primary"):
-            with SessionLocal() as _s:
-                resultado = classificar_solicitacoes_periodo(_s, periodo)
-            st.success(
-                f"Classificação concluída — "
-                f"**{resultado['validadas']}** validada(s) · "
-                f"**{resultado['pendente_cadastro']}** novo(s) item(ns) · "
-                f"**{resultado['pendente_parametrizacao']}** sem parâmetro."
-            )
-            st.rerun()
-    elif todas_sols:
-        st.caption("Todas as solicitações do período já foram classificadas.")
+    if not todas_sols:
+        empty_state("📝", "Nenhuma solicitação", f"Nenhuma solicitação recebida para {periodo_label}.")
     else:
-        st.caption(f"Nenhuma solicitação recebida para {periodo_label}.")
+        # ── Agrupamento por (setor, solicitante) ──────────────────────────────
+        grupos: dict = defaultdict(list)
+        for sol in todas_sols:
+            chave = (sol.setor.nome if sol.setor else "—", sol.solicitante)
+            grupos[chave].append(sol)
+        grupos = dict(sorted(grupos.items()))
 
-    # ── Seção C: tabelas por status ──────────────────────────────────────────
-    if todas_sols:
+        # ── KPIs ──────────────────────────────────────────────────────────────
+        n_formularios = len(grupos)
+        n_prontos     = sum(1 for s in todas_sols if s.status == "validada")
+        n_acao        = sum(1 for s in todas_sols if s.status in {"pendente_cadastro", "pendente_parametrizacao"})
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("📋 Formulários recebidos", n_formularios)
+        col_m2.metric("✅ Itens prontos",          n_prontos)
+        col_m3.metric("⚠️ Requerem ação",          n_acao)
+
         st.markdown("---")
-        section_title("Detalhe por Status")
 
-        validadas_sols   = [s for s in todas_sols if s.status == "validada"]
-        novos_sols       = [s for s in todas_sols if s.status == "pendente_cadastro"]
-        sem_param_sols   = [s for s in todas_sols if s.status == "pendente_parametrizacao"]
-        pendentes_sols   = [s for s in todas_sols if s.status == "pendente"]
+        # ── Helpers ───────────────────────────────────────────────────────────
+        _STATUS_BADGE_MAP = {
+            "validada":                ("✅ Validada",       "#28a745"),
+            "pendente":                ("⏳ Pendente",       "#6c757d"),
+            "pendente_cadastro":       ("🆕 Novo Item",      "#fd7e14"),
+            "pendente_parametrizacao": ("⚙️ Sem Parâmetros", "#6f42c1"),
+        }
 
-        def _cabecalho_sol():
-            c1, c2, c3, c4, c5, _ = st.columns([3, 2, 1, 2, 2, 1])
-            c1.caption("Item")
-            c2.caption("Categoria")
-            c3.caption("Qtd")
-            c4.caption("Setor")
-            c5.caption("Solicitante")
+        def _badge(status: str) -> str:
+            label, cor = _STATUS_BADGE_MAP.get(status, (status, "#6c757d"))
+            return (
+                f"<span style='background:{cor}22;color:{cor};padding:2px 8px;"
+                f"border-radius:4px;font-size:12px;font-weight:600;'>{label}</span>"
+            )
 
-        def _render_sols(sols: list, prefixo: str) -> None:
-            _cabecalho_sol()
-            for sol in sols:
-                nome_item = sol.item.nome if sol.item else (sol.nome_item_livre or "—")
-                cat       = sol.item.categoria.nome if sol.item and sol.item.categoria else "—"
-                setor_n   = sol.setor.nome if sol.setor else "—"
-                c1, c2, c3, c4, c5, c_rm = st.columns([3, 2, 1, 2, 2, 1])
-                c1.markdown(f"**{nome_item}**")
-                c2.markdown(
-                    f"<span style='color:rgba(235,235,235,0.55);font-size:13px;'>{cat}</span>",
-                    unsafe_allow_html=True,
-                )
-                c3.markdown(str(sol.quantidade_solicitada))
-                c4.markdown(
-                    f"<span style='color:rgba(235,235,235,0.55);font-size:13px;'>{setor_n}</span>",
-                    unsafe_allow_html=True,
-                )
-                c5.markdown(
-                    f"<span style='color:rgba(235,235,235,0.55);font-size:13px;'>{sol.solicitante}</span>",
-                    unsafe_allow_html=True,
-                )
-                if c_rm.button("✕", key=f"del_sol_{prefixo}_{sol.id}", help="Remover solicitação"):
-                    with SessionLocal() as _s:
-                        deletar_solicitacao(_s, sol.id)
-                    st.rerun()
+        def _resumo_grupo(sols: list) -> str:
+            partes = []
+            n_v = sum(1 for s in sols if s.status == "validada")
+            n_n = sum(1 for s in sols if s.status == "pendente_cadastro")
+            n_s = sum(1 for s in sols if s.status == "pendente_parametrizacao")
+            n_p = sum(1 for s in sols if s.status == "pendente")
+            if n_v: partes.append(f"✅ {n_v} pronto(s)")
+            if n_n: partes.append(f"🆕 {n_n} novo(s)")
+            if n_s: partes.append(f"⚙️ {n_s} sem parâm.")
+            if n_p: partes.append(f"⏳ {n_p} pendente(s)")
+            return " · ".join(partes) if partes else "—"
 
-        if validadas_sols:
-            with st.expander(f"✅  Validadas ({len(validadas_sols)}) — prontas para consolidação", expanded=True):
-                _render_sols(validadas_sols, "v")
+        # ── Documentos ────────────────────────────────────────────────────────
+        section_title("Formulários Recebidos")
 
-        if novos_sols:
-            with st.expander(f"🆕  Novos Itens ({len(novos_sols)}) — pendentes de cadastro"):
-                st.caption("Itens solicitados que não existem no catálogo. Avalie o cadastro em Estoque antes de consolidar.")
-                _render_sols(novos_sols, "n")
+        for (setor_nome, solicitante), sols in grupos.items():
+            data_doc     = max(s.criado_em for s in sols).strftime("%d/%m/%Y")
+            n_itens      = len(sols)
+            resumo       = _resumo_grupo(sols)
+            tem_validada = any(s.status == "validada" for s in sols)
+            label_exp    = (
+                f"🏢  {setor_nome}  ·  {solicitante}  ·  {data_doc}"
+                f"  —  {n_itens} item(ns)  ·  {resumo}"
+            )
 
-        if sem_param_sols:
-            with st.expander(f"⚙️  Sem Parâmetros ({len(sem_param_sols)}) — sem mínimo/ideal definido"):
-                st.caption("Itens do catálogo sem estoque mínimo ou ideal configurados. Configure-os em Estoque para que entrem na consolidação.")
-                _render_sols(sem_param_sols, "p")
+            with st.expander(label_exp):
+                if not tem_validada:
+                    if st.button(
+                        "🗑 Excluir formulário completo",
+                        key=f"del_doc_{setor_nome}_{solicitante}",
+                        help="Remove todos os itens deste formulário",
+                    ):
+                        with SessionLocal() as _s:
+                            for sol in sols:
+                                deletar_solicitacao(_s, sol.id)
+                        st.rerun()
+                else:
+                    st.caption("⚠️ Revise cada item solicitado para uma aprovação mais precisa e confiável.")
 
-        if pendentes_sols:
-            with st.expander(f"⏳  Pendentes de Classificação ({len(pendentes_sols)})"):
-                _render_sols(pendentes_sols, "pe")
+                st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+                ch1, ch2, ch3, ch4, _, _ = st.columns([4, 1, 3, 2, 1, 1])
+                ch1.caption("Item")
+                ch2.caption("Qtd")
+                ch3.caption("Observação")
+                ch4.caption("Status")
+
+                for sol in sols:
+                    nome_item = sol.item.nome if sol.item else (sol.nome_item_livre or "—")
+                    obs       = sol.observacao or "—"
+                    c1, c2, c3, c4, c_acao, c_rm = st.columns([4, 1, 3, 2, 1, 1])
+                    c1.markdown(f"**{nome_item}**")
+                    c2.markdown(str(sol.quantidade_solicitada))
+                    c3.caption(obs if obs != "—" else "")
+                    c4.markdown(_badge(sol.status), unsafe_allow_html=True)
+
+                    if sol.status == "validada":
+                        if c_acao.button("✓", key=f"aceitar_sol_{sol.id}", help="Aceitar e aprovar para a lista de compras", use_container_width=True):
+                            with SessionLocal() as _s:
+                                consolidar_periodo(_s, periodo)
+                                itens_lc = get_consolidacao_periodo(_s, periodo)
+                                item_lc = next((x for x in itens_lc if x.item_id == sol.item_id), None)
+                                if item_lc:
+                                    aprovar_item(_s, item_lc.id, item_lc.quantidade_sugerida)
+                            st.rerun()
+                    elif sol.status == "pendente_cadastro":
+                        if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque', use_container_width=True):
+                            st.switch_page("pages/Estoque.py")
+                    elif sol.status == "pendente_parametrizacao":
+                        if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque', use_container_width=True):
+                            st.switch_page("pages/Estoque.py")
+
+                    if c_rm.button("✕", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
+                        with SessionLocal() as _s:
+                            deletar_solicitacao(_s, sol.id)
+                        st.rerun()
+
+                # ── Aprovação por formulário ───────────────────────────────────
+                validadas_grupo = [s for s in sols if s.status == "validada"]
+                if validadas_grupo:
+                    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                    col_apr_doc, _ = st.columns([2, 4])
+                    with col_apr_doc:
+                        if st.button(
+                            f"Aprovar Pedidos",
+                            key=f"apr_doc_{setor_nome}_{solicitante}",
+                            type="primary",
+                            use_container_width=True,
+                            help="Aprova todos os itens validados deste formulário para a lista de compras",
+                        ):
+                            with SessionLocal() as _s:
+                                consolidar_periodo(_s, periodo)
+                                itens_lc = get_consolidacao_periodo(_s, periodo)
+                                for sol_v in validadas_grupo:
+                                    item_lc = next((x for x in itens_lc if x.item_id == sol_v.item_id), None)
+                                    if item_lc:
+                                        aprovar_item(_s, item_lc.id, item_lc.quantidade_sugerida)
+                            st.rerun()
 
 
 # =============================================================================
@@ -370,7 +418,6 @@ elif aba == "Solicitações":
 # =============================================================================
 elif aba == "Consolidação":
 
-    # ── Solicitações recebidas ────────────────────────────────────────────────
     with SessionLocal() as _s:
         sols = listar_solicitacoes(_s, periodo)
         sols_info = [
@@ -385,34 +432,6 @@ elif aba == "Consolidação":
             }
             for s in sols
         ]
-
-    section_title(f"Solicitações Recebidas — {periodo_label}")
-
-    if not sols_info:
-        st.info(
-            "Nenhuma solicitação registrada para este período. "
-            "Os setores devem usar a página **Pedido de Compra** no menu lateral.",
-            icon="📝",
-        )
-    else:
-        st.caption(f"{len(sols_info)} solicitação(ões) recebida(s)")
-        for info in sols_info:
-            col_txt, col_del = st.columns([10, 1])
-            with col_txt:
-                obs_str = f" · *{info['obs']}*" if info["obs"] else ""
-                st.markdown(
-                    f"**{info['item_nome']}** &nbsp;·&nbsp; {info['quantidade']} un"
-                    f" &nbsp;·&nbsp; Setor: **{info['setor_nome']}**"
-                    f" &nbsp;·&nbsp; {info['solicitante']}{obs_str}",
-                    unsafe_allow_html=True,
-                )
-            with col_del:
-                if st.button("🗑", key=f"del_sol_{info['id']}", help="Remover solicitação"):
-                    with SessionLocal() as _s:
-                        deletar_solicitacao(_s, info["id"])
-                    st.rerun()
-
-    st.divider()
 
     # ── Tabela de consolidação ────────────────────────────────────────────────
     if not itens_lista:
@@ -545,15 +564,14 @@ elif aba == "Consolidação":
         if not principais and not pendencias and not sols_sem_cadastro:
             empty_state("✅", "Todos os itens estão com estoque adequado para o período.")
 
-# =============================================================================
-# ABA 4 — LISTA FINAL
-# =============================================================================
-else:
+    # ── Lista Final Aprovada ──────────────────────────────────────────────────
+    st.divider()
+    section_title("Lista Final Aprovada")
+
     with SessionLocal() as _s:
         lista_final = get_lista_final(_s, periodo)
         lista_final_info = [
             {
-                "id": x.id,
                 "item_nome": x.item.nome if x.item else "—",
                 "categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
                 "qtd_sugerida": x.quantidade_sugerida,
@@ -565,6 +583,9 @@ else:
                 "motivo": x.motivo or "—",
                 "fornecedor": x.fornecedor_sugerido.nome if x.fornecedor_sugerido else "—",
                 "valor_est": x.valor_estimado,
+                "estoque_atual": x.estoque_atual_snap,
+                "estoque_minimo": x.estoque_minimo_snap,
+                "estoque_ideal": x.estoque_ideal_snap,
             }
             for x in lista_final
         ]
@@ -573,13 +594,12 @@ else:
         empty_state(
             "✅",
             "Lista final vazia",
-            f"Aprove itens na aba 'Consolidação' para montar a lista de {periodo_label}.",
+            "Aprove itens acima marcando 'Incluir na Lista' e salvando.",
         )
     else:
         st.markdown(
             f"**{len(lista_final_info)} item(ns) aprovado(s) para orçamento — {periodo_label}**"
         )
-
         rows_final = [
             {
                 "Item": info["item_nome"],
@@ -598,21 +618,27 @@ else:
         if total_est:
             st.metric("Valor total estimado", fmt_brl(total_est))
 
-        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        df_docx = pd.DataFrame([
+            {
+                "Item": i["item_nome"],
+                "Categoria": i["categoria"],
+                "Atual": i["estoque_atual"],
+                "Mínimo": i["estoque_minimo"],
+                "Ideal": i["estoque_ideal"],
+                "Comprar": i["qtd_final"],
+                "Fornecedor": i["fornecedor"],
+                "Valor Est.": fmt_brl(i["valor_est"]) if i["valor_est"] else "—",
+            }
+            for i in lista_final_info
+        ])
+        caminho_docx = gerar_lista_compras(df_docx)
+        with open(caminho_docx, "rb") as f:
+            docx_bytes = f.read()
+        st.download_button(
+            "📄 Baixar Lista de Compras (DOCX)",
+            data=docx_bytes,
+            file_name=f"lista_compras_{periodo_label}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="download_lista_final",
+        )
 
-        try:
-            from documents.lista_compras import gerar_lista_compras
-            if st.button("📄 Exportar Lista (.docx)", type="secondary"):
-                path = gerar_lista_compras(pd.DataFrame(rows_final))
-                with open(path, "rb") as f:
-                    st.download_button(
-                        label="⬇ Baixar Lista de Compras",
-                        data=f.read(),
-                        file_name=path.name,
-                        mime=(
-                            "application/vnd.openxmlformats-officedocument"
-                            ".wordprocessingml.document"
-                        ),
-                    )
-        except ImportError:
-            st.caption("Módulo de exportação DOCX ainda não disponível.")
