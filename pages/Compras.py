@@ -4,6 +4,7 @@ Fluxo: seleção de período → solicitações (formulário externo /solicitar)
 classificar → consolidar → revisar painel → lista final.
 """
 
+import calendar
 import datetime
 from collections import defaultdict
 
@@ -113,39 +114,57 @@ with col_ano:
         label_visibility="collapsed",
     )
 with col_btn:
-    consolidar = st.button("▶ Consolidar Período", type="primary", use_container_width=True)
+    consolidar = st.button("▶ Análise Mensal de Compras", type="primary", use_container_width=True)
 
 periodo = datetime.date(ano_sel, mes_sel, 1)
 periodo_label = f"{MESES_PT[mes_sel]}/{ano_sel}"
 
 with SessionLocal() as _s:
     periodos_existentes = get_periodos_com_consolidacao(_s)
-
-if periodo in periodos_existentes:
-    st.info(f"Consolidação disponível para **{periodo_label}**", icon="✅")
-else:
-    st.warning(f"Nenhuma consolidação para **{periodo_label}** — clique em Consolidar Período.", icon="⚠️")
-
-if consolidar:
-    with st.spinner("Consolidando..."):
-        with SessionLocal() as _s:
-            results, summary = consolidar_periodo(_s, periodo)
-    st.success(
-        f"**{periodo_label}** consolidado — "
-        f"{summary.itens_zerados} zerado(s) · "
-        f"{summary.itens_abaixo_minimo} abaixo do mínimo · "
-        f"{summary.itens_comprar} com pedido pressiona · "
-        f"{summary.itens_excesso} excesso"
-    )
-    st.rerun()
-
-st.divider()
-
-# ── Dados do período ──────────────────────────────────────────────────────────
-with SessionLocal() as _s:
     itens_lista = get_consolidacao_periodo(_s, periodo)
     cats = get_categorias(_s)
     cat_nomes = ["Todas"] + sorted({x.item.categoria.nome for x in itens_lista if x.item and x.item.categoria})
+
+_ultimo_dia = calendar.monthrange(ano_sel, mes_sel)[1]
+_janela_inicio = f"01/{mes_sel:02d}/{ano_sel}"
+_janela_fim    = f"{_ultimo_dia:02d}/{mes_sel:02d}/{ano_sel}"
+
+if periodo in periodos_existentes:
+    _ultima_analise = max((x.atualizado_em for x in itens_lista), default=None)
+    _n_total        = len(itens_lista)
+    _n_comprar      = sum(1 for x in itens_lista if x.status in {"zerado", "abaixo_minimo", "comprar"})
+    _n_sem_min      = sum(1 for x in itens_lista if x.status == "sem_minimo_definido")
+    _n_lista_final  = sum(1 for x in itens_lista if x.incluir_na_lista_final)
+    _data_str       = _ultima_analise.strftime("%d/%m/%Y às %H:%M") if _ultima_analise else "—"
+    _sem_min_str    = f" · ⚠️ {_n_sem_min} sem mínimo/ideal" if _n_sem_min else ""
+    _banner_icon    = "⚠️" if _n_sem_min else "✅"
+    st.info(
+        f"**Análise Mensal disponível — {periodo_label}**  \n"
+        f"📅 Janela: {_janela_inicio} – {_janela_fim} · Última análise: {_data_str}  \n"
+        f"🔢 {_n_total} item(ns) analisado(s) · {_n_comprar} a comprar{_sem_min_str} · {_n_lista_final} aprovado(s) na lista final",
+        icon=_banner_icon,
+    )
+else:
+    st.warning(
+        f"Nenhuma análise para **{periodo_label}** — clique em **Análise Mensal de Compras**."
+        f"  \n📅 Janela: {_janela_inicio} – {_janela_fim}",
+        icon="⚠️",
+    )
+
+if consolidar:
+    _aba_atual = st.session_state.get("compras_aba", "Painel de Reposição")
+    with st.spinner("Analisando período..."):
+        with SessionLocal() as _s:
+            results, summary = consolidar_periodo(_s, periodo)
+    st.success(
+        f"Análise de **{periodo_label}** concluída — "
+        f"{summary.itens_zerados} zerado(s) · "
+        f"{summary.itens_abaixo_minimo} abaixo do mínimo · "
+        f"{summary.itens_comprar} com solicitação ativa · "
+        f"{summary.itens_excesso} excesso"
+    )
+    st.session_state["compras_aba"] = _aba_atual
+    st.rerun()
 
 # ── Navegação por abas ────────────────────────────────────────────────────────
 aba = st.radio(
@@ -165,7 +184,7 @@ if aba == "Painel de Reposição":
         empty_state(
             "🛒",
             "Sem dados para este período",
-            f"Clique em 'Consolidar Período' para gerar a análise de {periodo_label}.",
+            f"Clique em 'Análise Mensal de Compras' para gerar a análise de {periodo_label}.",
         )
     else:
         zerados      = [x for x in itens_lista if x.status == "zerado"]
@@ -272,12 +291,14 @@ elif aba == "Solicitações e Pendências":
     # ── Auto-classificação: processar pendentes antes de exibir ──────────────
     with SessionLocal() as _s:
         _raw = listar_solicitacoes(_s, periodo)
-        if any(s.status == "pendente" for s in _raw):
+        if any(s.status in {"pendente", "pendente_parametrizacao"} for s in _raw):
             classificar_solicitacoes_periodo(_s, periodo)
         todas_sols = listar_solicitacoes(_s, periodo)
 
-    if not todas_sols:
-        empty_state("📝", "Nenhuma solicitação", f"Nenhuma solicitação recebida para {periodo_label}.")
+    sem_min_sols = [x for x in itens_lista if x.status == "sem_minimo_definido"]
+
+    if not todas_sols and not sem_min_sols:
+        empty_state("📝", "Nenhuma pendência", f"Nenhuma solicitação ou item sem parâmetros para {periodo_label}.")
     else:
         # ── Agrupamento por (setor, solicitante) ──────────────────────────────
         grupos: dict = defaultdict(list)
@@ -289,14 +310,17 @@ elif aba == "Solicitações e Pendências":
         # ── KPIs ──────────────────────────────────────────────────────────────
         n_formularios = len(grupos)
         n_prontos     = sum(1 for s in todas_sols if s.status == "validada")
-        n_acao        = sum(1 for s in todas_sols if s.status in {"pendente_cadastro", "pendente_parametrizacao"})
+        n_novos       = sum(1 for s in todas_sols if s.status == "pendente_cadastro")
+        n_sem_param   = (
+            sum(1 for s in todas_sols if s.status == "pendente_parametrizacao")
+            + len(sem_min_sols)
+        )
 
-        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         col_m1.metric("📋 Formulários recebidos", n_formularios)
         col_m2.metric("✅ Itens prontos",          n_prontos)
-        col_m3.metric("⚠️ Requerem ação",          n_acao)
-
-        st.markdown("---")
+        col_m3.metric("🆕 Novos Itens",            n_novos)
+        col_m4.metric("⚙️ Sem Parâmetros",         n_sem_param)
 
         # ── Helpers ───────────────────────────────────────────────────────────
         _STATUS_BADGE_MAP = {
@@ -326,7 +350,8 @@ elif aba == "Solicitações e Pendências":
             return " · ".join(partes) if partes else "—"
 
         # ── Documentos ────────────────────────────────────────────────────────
-        section_title("Formulários Recebidos")
+        if todas_sols:
+            section_title("Formulários Recebidos")
 
         for (setor_nome, solicitante), sols in grupos.items():
             data_doc     = max(s.criado_em for s in sols).strftime("%d/%m/%Y")
@@ -379,10 +404,14 @@ elif aba == "Solicitações e Pendências":
                                     aprovar_item(_s, item_lc.id, item_lc.quantidade_sugerida)
                             st.rerun()
                     elif sol.status == "pendente_cadastro":
-                        if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque', use_container_width=True):
+                        if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque → Editar → Itens', use_container_width=True):
+                            st.session_state["estoque_tab"] = "Editar"
+                            st.session_state["estoque_subtab"] = "Itens"
                             st.switch_page("pages/Estoque.py")
                     elif sol.status == "pendente_parametrizacao":
-                        if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque', use_container_width=True):
+                        if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque → Editar → Itens', use_container_width=True):
+                            st.session_state["estoque_tab"] = "Editar"
+                            st.session_state["estoque_subtab"] = "Itens"
                             st.switch_page("pages/Estoque.py")
 
                     if c_rm.button("✕", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
@@ -418,38 +447,37 @@ elif aba == "Solicitações e Pendências":
 # =============================================================================
 elif aba == "Consolidação":
 
-    with SessionLocal() as _s:
-        sols = listar_solicitacoes(_s, periodo)
-        sols_info = [
-            {
-                "id": s.id,
-                "item_nome": s.item.nome if s.item else f"{s.nome_item_livre} (não cadastrado)",
-                "item_id": s.item_id,
-                "setor_nome": s.setor.nome if s.setor else "—",
-                "solicitante": s.solicitante,
-                "quantidade": s.quantidade_solicitada,
-                "obs": s.observacao or "",
-            }
-            for s in sols
-        ]
+    with SessionLocal() as _s_conso:
+        _sols_conso = listar_solicitacoes(_s_conso, periodo)
+    _n_sols_pendentes = sum(
+        1 for s in _sols_conso if s.status in {"pendente_cadastro", "pendente_parametrizacao"}
+    )
 
     # ── Tabela de consolidação ────────────────────────────────────────────────
     if not itens_lista:
         empty_state(
             "🔗",
-            "Sem consolidação para este período",
-            "Clique em 'Consolidar Período' para cruzar estoque e solicitações.",
+            "Sem análise para este período",
+            "Clique em 'Análise Mensal de Compras' para cruzar estoque e solicitações.",
         )
     else:
         STATUS_ATIVOS = {"zerado", "abaixo_minimo", "comprar"}
-        STATUS_PENDENCIAS = {"sem_minimo_definido"}
 
-        principais = [x for x in itens_lista if x.status in STATUS_ATIVOS]
-        pendencias = [x for x in itens_lista if x.status in STATUS_PENDENCIAS]
-        sols_sem_cadastro = [i for i in sols_info if i["item_id"] is None]
+        principais   = [x for x in itens_lista if x.status in STATUS_ATIVOS]
+        sem_min_conso = [x for x in itens_lista if x.status == "sem_minimo_definido"]
 
         if principais:
             section_title("Itens para Decisão de Compra")
+            _avisos_conso = []
+            if sem_min_conso:
+                _avisos_conso.append(f"{len(sem_min_conso)} item(ns) sem mínimo/ideal")
+            if _n_sols_pendentes:
+                _avisos_conso.append(f"{_n_sols_pendentes} solicitação(ões) pendente(s)")
+            if _avisos_conso:
+                st.caption(
+                    f"⚠️ {' · '.join(_avisos_conso)} — "
+                    f"resolva em **Solicitações e Pendências** e rode novamente a análise."
+                )
             st.caption(
                 "Edite 'Qtd Final' e 'Motivo' quando necessário. "
                 "Marque 'Incluir na Lista' e clique em Salvar para aprovar."
@@ -533,36 +561,23 @@ elif aba == "Consolidação":
                     st.success("Alterações salvas com sucesso.")
                     st.rerun()
 
-        if pendencias:
-            section_title("Pendências — Itens Sem Parâmetros")
-            st.caption("Defina mínimo e ideal em Estoque → Editar Item e reconsolide.")
-            rows_pend = [
-                {
-                    "Item": x.item.nome if x.item else "—",
-                    "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
-                    "Estoque Atual": x.estoque_atual_snap,
-                    "Solicitado": x.total_solicitado,
-                }
-                for x in pendencias
-            ]
-            st.dataframe(pd.DataFrame(rows_pend), use_container_width=True, hide_index=True)
-
-        if sols_sem_cadastro:
-            section_title("Itens Solicitados Não Cadastrados")
-            st.caption("Cadastre os itens abaixo em Estoque antes de incluí-los na consolidação.")
-            rows_nc = [
-                {
-                    "Nome informado": info["item_nome"],
-                    "Quantidade": info["quantidade"],
-                    "Solicitante": info["solicitante"],
-                    "Setor": info["setor_nome"],
-                }
-                for info in sols_sem_cadastro
-            ]
-            st.dataframe(pd.DataFrame(rows_nc), use_container_width=True, hide_index=True)
-
-        if not principais and not pendencias and not sols_sem_cadastro:
-            empty_state("✅", "Todos os itens estão com estoque adequado para o período.")
+        if not principais:
+            if sem_min_conso:
+                st.warning(
+                    f"**{len(sem_min_conso)} item sem mínimo/ideal definido** — o motor não pôde analisar a necessidade de compra destes itens.  \n"
+                    f"Configure os parâmetros em **Solicitações e Pendências** e rode novamente a **Análise Mensal de Compras**.",
+                    icon="⚠️",
+                )
+            elif _n_sols_pendentes:
+                st.warning(
+                    f"Estoque adequado para os itens analisados, mas há "
+                    f"**{_n_sols_pendentes} solicitação(ões) pendente(s)** que não puderam ser processadas.  \n"
+                    f"Resolva as pendências na aba **Solicitações e Pendências** e rode novamente "
+                    f"a **Análise Mensal de Compras** para incluí-las.",
+                    icon="⚠️",
+                )
+            else:
+                empty_state("✅", "Todos os itens estão com estoque adequado para o período.")
 
     # ── Lista Final Aprovada ──────────────────────────────────────────────────
     st.divider()

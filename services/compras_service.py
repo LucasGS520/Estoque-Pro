@@ -159,7 +159,7 @@ def classificar_solicitacoes_periodo(
         session.query(SolicitacaoMaterial)
         .filter(
             SolicitacaoMaterial.periodo_referencia == periodo,
-            SolicitacaoMaterial.status == "pendente",
+            SolicitacaoMaterial.status.in_(["pendente", "pendente_parametrizacao"]),
         )
         .all()
     )
@@ -172,8 +172,8 @@ def classificar_solicitacoes_periodo(
             contagens["pendente_cadastro"] += 1
         else:
             item = session.get(Item, sol.item_id)
-            tem_minimo = item is not None and item.estoque_minimo_vigente is not None
-            tem_ideal = item is not None and item.estoque_ideal_vigente is not None
+            tem_minimo = item is not None and (item.estoque_minimo_vigente or 0) > 0
+            tem_ideal  = item is not None and (item.estoque_ideal_vigente or 0) > 0
             if tem_minimo and tem_ideal:
                 sol.status = "validada"
                 contagens["validadas"] += 1
