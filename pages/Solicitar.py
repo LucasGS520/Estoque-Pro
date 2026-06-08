@@ -79,7 +79,9 @@ with SessionLocal() as _s:
         for i in _itens_raw
     ]
 
-opcoes_periodo = _opcoes_periodo()
+_hoje_sol = datetime.date.today()
+periodo_sel = datetime.date(_hoje_sol.year, _hoje_sol.month, 1)
+periodo_label_sol = f"{MESES_PT[_hoje_sol.month]}/{_hoje_sol.year}"
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
 
 # ---------------------------------------------------------------------------
@@ -149,12 +151,14 @@ with col2:
     solicitante = st.text_input("Nome do Solicitante *", placeholder="Nome completo", key="inp_solicitante")
 
 with col3:
-    periodo_sel = st.selectbox(
-        "Período *",
-        options=opcoes_periodo,
-        format_func=_periodo_label,
-        key="sel_periodo",
+    st.markdown(
+        f"**Período de referência**  \n"
+        f"<span style='font-size:15px;font-weight:600;color:#262626;'>{periodo_label_sol}</span>"
+        f"<br><span style='font-size:11px;color:#737373;'>Definido automaticamente</span>",
+        unsafe_allow_html=True,
     )
+    urgente = st.checkbox("🔴 Urgente", key="chk_urgente",
+                          help="Marque se este pedido tem prioridade de atendimento")
 
 st.markdown("---")
 
@@ -370,6 +374,7 @@ else:
                     solicitante=solicitante.strip(),
                     quantidade_solicitada=item["quantidade"],
                     observacao=item.get("observacao"),
+                    urgente=urgente,
                     periodo_referencia=periodo_sel,
                 )
                 criar_solicitacao(_s, dados)

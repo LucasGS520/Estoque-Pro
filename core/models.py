@@ -208,6 +208,7 @@ class SolicitacaoMaterial(Base):
     solicitante = Column(String(100), nullable=False)
     quantidade_solicitada = Column(Integer, nullable=False)
     observacao = Column(Text, nullable=True)
+    urgente = Column(Boolean, nullable=False, default=False)
     periodo_referencia = Column(Date, nullable=False)
     status = Column(String(20), nullable=False, default="pendente")
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
@@ -219,8 +220,9 @@ class SolicitacaoMaterial(Base):
 class ItemListaCompra(Base):
     """Resultado consolidado de análise de compra por item e período.
 
-    Carrega os campos editáveis de governança (quantidade_final_definida, motivo)
-    e a flag de aprovação para envio ao Orçamentos.
+    Carrega os campos editáveis de governança (quantidade_final_definida, observacao)
+    e a flag de aprovação para envio ao Orçamentos. `motivo_sugestao` é gerado
+    automaticamente pelo engine para auditoria; `observacao` é preenchida pelo responsável.
     """
 
     __tablename__ = "itens_lista_compra"
@@ -238,7 +240,8 @@ class ItemListaCompra(Base):
     total_solicitado = Column(Integer, nullable=False, default=0)
     quantidade_sugerida = Column(Integer, nullable=False, default=0)
     quantidade_final_definida = Column(Integer, nullable=True)
-    motivo = Column(Text, nullable=True)
+    observacao = Column(Text, nullable=True)
+    motivo_sugestao = Column(Text, nullable=True)
     incluir_na_lista_final = Column(Boolean, default=False)
     valor_estimado = Column(Float, nullable=True)
     fornecedor_sugerido_id = Column(Integer, ForeignKey("fornecedores.id"), nullable=True)

@@ -52,6 +52,10 @@ def run_schema_migrations(engine):
         "ALTER TABLE itens ADD COLUMN estoque_ideal_vigente INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE itens ADD COLUMN origem_minimo VARCHAR(20)",
         "ALTER TABLE itens ADD COLUMN origem_ideal VARCHAR(20)",
+        # Compras: urgência em solicitações e auditoria de sugestão na lista
+        "ALTER TABLE solicitacoes_material ADD COLUMN urgente BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE itens_lista_compra ADD COLUMN motivo_sugestao TEXT",
+        "ALTER TABLE itens_lista_compra RENAME COLUMN motivo TO observacao",
     ]
     with engine.connect() as conn:
         for stmt in new_columns:

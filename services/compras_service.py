@@ -17,7 +17,7 @@ from core.engine import (
 )
 from core.models import Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial
 from core.schemas import SolicitacaoMaterialCreate
-from services.fornecedor_service import get_best_price
+from services.fornecedor_service import get_best_price, get_best_prices_bulk
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +53,7 @@ def _item_to_record(item: Item, session: Session) -> ItemRecord:
         fornecedor_sugerido=melhor_preco.fornecedor.nome if melhor_preco else None,
         fornecedor_sugerido_id=melhor_preco.fornecedor_id if melhor_preco else None,
         margem_operacional=margem,
+        consumo_mediana_diario=revisao.consumo_mediana_diario if revisao else None,
     )
 
 
@@ -141,6 +142,7 @@ def criar_solicitacao(
         solicitante=dados.solicitante,
         quantidade_solicitada=dados.quantidade_solicitada,
         observacao=dados.observacao,
+        urgente=dados.urgente,
         periodo_referencia=dados.periodo_referencia,
         status="pendente",
     )
@@ -166,7 +168,7 @@ def listar_solicitacoes(
     )
     if setor_id is not None:
         q = q.filter(SolicitacaoMaterial.setor_id == setor_id)
-    return q.order_by(SolicitacaoMaterial.criado_em.desc()).all()
+    return q.order_by(SolicitacaoMaterial.urgente.desc(), SolicitacaoMaterial.criado_em.desc()).all()
 
 
 def deletar_solicitacao(session: Session, sol_id: int) -> None:
@@ -320,10 +322,31 @@ def consolidar_periodo(
         )
         sols_por_item.setdefault(sol.item_id, []).append(rec)
 
-    # Monta ItemRecords com solicitações
+    # Carrega melhores preços e consumos em bulk (evita N+1)
+    ids_itens = [i.id for i in itens]
+    melhores_precos = get_best_prices_bulk(session, ids_itens)
+    # Revisão mais recente por item (order desc + setdefault mantém só a primeira)
+    revisoes_por_item: dict[int, RevisaoMensal] = {}
+    for r in (
+        session.query(RevisaoMensal)
+        .filter(RevisaoMensal.item_id.in_(ids_itens))
+        .order_by(RevisaoMensal.item_id, RevisaoMensal.criado_em.desc())
+        .all()
+    ):
+        revisoes_por_item.setdefault(r.item_id, r)
+
+    # Monta ItemRecords com solicitações, preços e consumo
     records: list[ItemRecord] = []
     for item in itens:
-        melhor_preco = get_best_price(session, item.id)
+        melhor_preco = melhores_precos.get(item.id)
+        revisao = revisoes_por_item.get(item.id)
+        margem = None
+        if (
+            revisao
+            and revisao.consumo_mediana_diario is not None
+            and revisao.intervalo_mediano_dias is not None
+        ):
+            margem = revisao.consumo_mediana_diario * revisao.intervalo_mediano_dias
         rec = ItemRecord(
             item_id=item.id,
             nome=item.nome,
@@ -334,6 +357,8 @@ def consolidar_periodo(
             preco_unitario=melhor_preco.preco_unitario if melhor_preco else None,
             fornecedor_sugerido=melhor_preco.fornecedor.nome if melhor_preco else None,
             fornecedor_sugerido_id=melhor_preco.fornecedor_id if melhor_preco else None,
+            margem_operacional=margem,
+            consumo_mediana_diario=revisao.consumo_mediana_diario if revisao else None,
             solicitations=sols_por_item.get(item.id, []),
         )
         records.append(rec)
@@ -364,13 +389,14 @@ def consolidar_periodo(
             lista.estoque_ideal_snap = r.estoque_ideal
             lista.total_solicitado = r.total_solicitado
             lista.quantidade_sugerida = r.quantidade_recomendar
+            lista.motivo_sugestao = r.motivo_sugestao
             lista.valor_estimado = r.valor_estimado
             lista.fornecedor_sugerido_id = r.fornecedor_sugerido_id
             lista.atualizado_em = datetime.datetime.utcnow()
             # Preserva decisões manuais se já foram registradas
             if not editado_manualmente:
                 lista.quantidade_final_definida = None
-                lista.motivo = None
+                lista.observacao = None
                 lista.incluir_na_lista_final = False
         else:
             lista = ItemListaCompra(
@@ -382,6 +408,7 @@ def consolidar_periodo(
                 estoque_ideal_snap=r.estoque_ideal,
                 total_solicitado=r.total_solicitado,
                 quantidade_sugerida=r.quantidade_recomendar,
+                motivo_sugestao=r.motivo_sugestao,
                 valor_estimado=r.valor_estimado,
                 fornecedor_sugerido_id=r.fornecedor_sugerido_id,
             )
@@ -445,14 +472,14 @@ def aprovar_item(
     session: Session,
     lista_id: int,
     qtd_final: int,
-    motivo: Optional[str] = None,
+    observacao: Optional[str] = None,
 ) -> ItemListaCompra:
-    """Aprova um item para a lista final com quantidade e motivo definidos."""
+    """Aprova um item para a lista final com quantidade e observação definidas."""
     lista = session.get(ItemListaCompra, lista_id)
     if lista is None:
         raise ValueError(f"ItemListaCompra {lista_id} não encontrado")
     lista.quantidade_final_definida = qtd_final
-    lista.motivo = motivo
+    lista.observacao = observacao
     lista.incluir_na_lista_final = True
     lista.atualizado_em = datetime.datetime.utcnow()
     session.commit()

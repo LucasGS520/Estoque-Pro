@@ -45,6 +45,7 @@ class ItemRecord:
     fornecedor_sugerido: Optional[str] = None
     fornecedor_sugerido_id: Optional[int] = None
     margem_operacional: Optional[float] = None
+    consumo_mediana_diario: Optional[float] = None
     solicitations: list[SolicitacaoRecord] = field(default_factory=list)
 
 
@@ -69,6 +70,7 @@ class AnalysisResult:
     alvo_reposicao: Optional[int] = None
     total_solicitado: int = 0
     saldo_pos_atendimento: int = 0
+    motivo_sugestao: str = ""
 
 
 @dataclass
@@ -168,59 +170,155 @@ class StockAnalyzer:
         sem_parametro = item.estoque_minimo == 0 or item.estoque_ideal == 0
 
         if sem_parametro:
-            return self._build_result(item, ItemStatus.SEM_PARAMETRO, 0, None)
+            return self._build_result(item, ItemStatus.SEM_PARAMETRO, 0, None,
+                                      motivo_sugestao="Parâmetros mínimo/ideal não definidos")
 
         alvo = _calcular_alvo(item.estoque_minimo, item.estoque_ideal, item.margem_operacional)
 
         if item.qtd_atual == 0:
-            qtd = max(0, alvo - item.qtd_atual)
-            return self._build_result(item, ItemStatus.ZERADO, qtd, alvo)
+            qtd = max(0, item.estoque_ideal - item.qtd_atual)
+            return self._build_result(item, ItemStatus.ZERADO, qtd, alvo,
+                                      motivo_sugestao="Estoque zerado — reposição urgente")
 
         if item.qtd_atual <= item.estoque_minimo:
-            qtd = max(0, alvo - item.qtd_atual)
-            return self._build_result(item, ItemStatus.ABAIXO_MINIMO, qtd, alvo)
+            qtd = max(0, item.estoque_ideal - item.qtd_atual)
+            return self._build_result(item, ItemStatus.ABAIXO_MINIMO, qtd, alvo,
+                                      motivo_sugestao=f"Abaixo do mínimo (atual: {item.qtd_atual} | mín: {item.estoque_minimo})")
 
         if item.qtd_atual <= item.estoque_ideal:
-            return self._build_result(item, ItemStatus.ABAIXO_IDEAL, 0, alvo)
+            return self._build_result(item, ItemStatus.ABAIXO_IDEAL, 0, alvo,
+                                      motivo_sugestao="Abaixo do ideal, sem demanda suficiente para compra")
 
-        return self._build_result(item, ItemStatus.OK, 0, alvo)
+        return self._build_result(item, ItemStatus.OK, 0, alvo,
+                                  motivo_sugestao="Estoque adequado")
 
     def calcular_status_consolidado(self, item: ItemRecord) -> AnalysisResult:
         """Cruza estoque com solicitações do período.
 
-        Ordem de avaliação idêntica ao modo puro, mas a classificação e a
-        quantidade sugerida são calculadas sobre o saldo projetado após atender
-        todas as solicitações aprovadas do período.
+        Fórmula de quantidade:
+          reposicao_ideal         = max(ideal - atual, 0)
+          disponivel_acima_minimo = max(atual - minimo, 0)
+          demanda_liquida         = max(total_solicitado - disponivel_acima_minimo, 0)
+          quantidade_sugerida     = max(reposicao_ideal, demanda_liquida)
+
+        ABAIXO_IDEAL só gera quantidade se houver sinal operacional:
+          - solicitação aprovada no período
+          - consumo recente registrado (consumo_mediana_diario > 0)
+          - estoque muito próximo ao mínimo (buffer <= 20% do mínimo ou <= 2 unidades)
         """
         sem_parametro = item.estoque_minimo == 0 or item.estoque_ideal == 0
         qtd_total = sum(s.quantidade for s in item.solicitations)
         saldo = item.qtd_atual - qtd_total
-        tem_solicits = qtd_total > 0
 
         if sem_parametro:
             return self._build_result(item, ItemStatus.SEM_PARAMETRO, 0, None,
-                                      total_solicitado=qtd_total, saldo=saldo)
+                                      total_solicitado=qtd_total, saldo=saldo,
+                                      motivo_sugestao="Parâmetros mínimo/ideal não definidos")
 
         alvo = _calcular_alvo(item.estoque_minimo, item.estoque_ideal, item.margem_operacional)
 
+        reposicao_ideal = max(item.estoque_ideal - item.qtd_atual, 0)
+        disponivel_acima_minimo = max(item.qtd_atual - item.estoque_minimo, 0)
+        demanda_liquida = max(qtd_total - disponivel_acima_minimo, 0)
+
         if item.qtd_atual == 0:
-            qtd = max(0, alvo - saldo)
+            qtd = max(reposicao_ideal, demanda_liquida)
+            if demanda_liquida > reposicao_ideal:
+                motivo = (
+                    f"Estoque zerado — qtd {qtd}: demanda líquida "
+                    f"({qtd_total} sol.) > reposição ao ideal ({reposicao_ideal})"
+                )
+            else:
+                motivo = f"Estoque zerado — qtd {qtd}: reposição ao ideal"
+                if qtd_total > 0:
+                    motivo += f" | demanda aprovada: {qtd_total}"
             return self._build_result(item, ItemStatus.ZERADO, qtd, alvo,
-                                      total_solicitado=qtd_total, saldo=saldo)
+                                      total_solicitado=qtd_total, saldo=saldo,
+                                      motivo_sugestao=motivo)
 
-        if saldo <= item.estoque_minimo:
-            qtd = max(0, alvo - saldo)
+        if item.qtd_atual <= item.estoque_minimo:
+            qtd = max(reposicao_ideal, demanda_liquida)
+            base = f"Abaixo do mínimo (atual: {item.qtd_atual} | mín: {item.estoque_minimo})"
+            if demanda_liquida > reposicao_ideal:
+                motivo = (
+                    f"{base} — qtd {qtd}: demanda líquida "
+                    f"({qtd_total} sol.) > reposição ao ideal ({reposicao_ideal})"
+                )
+            else:
+                motivo = f"{base} — qtd {qtd}: reposição ao ideal ({reposicao_ideal})"
+                if qtd_total > 0:
+                    motivo += f" | demanda aprovada: {qtd_total}"
             return self._build_result(item, ItemStatus.ABAIXO_MINIMO, qtd, alvo,
-                                      total_solicitado=qtd_total, saldo=saldo)
+                                      total_solicitado=qtd_total, saldo=saldo,
+                                      motivo_sugestao=motivo)
 
-        if saldo <= item.estoque_ideal:
-            # ABAIXO_IDEAL: só gera quantidade se houver solicitações aprovadas
-            qtd = max(0, alvo - saldo) if tem_solicits else 0
+        if item.qtd_atual <= item.estoque_ideal:
+            tem_solicits = qtd_total > 0
+            prox_minimo = (item.qtd_atual - item.estoque_minimo) <= max(item.estoque_minimo * 0.2, 2)
+            # Sinal de consumo baseado em cobertura: só dispara quando o estoque atual
+            # cobre menos de 30 dias de consumo histórico (consumo "relevante").
+            # Evita sugerir compra para itens com dado histórico mínimo mas sem uso real.
+            _consumo = item.consumo_mediana_diario or 0
+            tem_consumo = _consumo > 0 and (item.qtd_atual / _consumo) < 30
+            sinal_operacional = tem_solicits or prox_minimo or tem_consumo
+
+            if sinal_operacional:
+                qtd = max(reposicao_ideal, demanda_liquida)
+                sinais = []
+                if tem_solicits:
+                    sinais.append(f"demanda ({qtd_total})")
+                if tem_consumo:
+                    sinais.append("consumo < 30 dias")
+                if prox_minimo:
+                    sinais.append("próximo ao mínimo")
+                motivo = "Abaixo do ideal: " + ", ".join(sinais)
+                if demanda_liquida > reposicao_ideal:
+                    motivo += (
+                        f" — qtd {qtd}: demanda líquida ({demanda_liquida}) "
+                        f"> reposição ao ideal ({reposicao_ideal})"
+                    )
+                else:
+                    motivo += f" — qtd {qtd}: reposição ao ideal ({reposicao_ideal})"
+                    if demanda_liquida > 0:
+                        motivo += f" | demanda líquida: {demanda_liquida}"
+            else:
+                qtd = 0
+                motivo = "Abaixo do ideal — sem demanda suficiente para compra (qtd: 0)"
+
             return self._build_result(item, ItemStatus.ABAIXO_IDEAL, qtd, alvo,
-                                      total_solicitado=qtd_total, saldo=saldo)
+                                      total_solicitado=qtd_total, saldo=saldo,
+                                      motivo_sugestao=motivo)
 
-        return self._build_result(item, ItemStatus.OK, 0, alvo,
-                                  total_solicitado=qtd_total, saldo=saldo)
+        # Item OK (atual > ideal): verificar se a demanda aprovada depleta o estoque
+        # abaixo do mínimo ou do ideal — tornando a compra necessária mesmo assim.
+        if qtd_total > 0:
+            saldo_previsto = item.qtd_atual - qtd_total
+            if saldo_previsto <= item.estoque_minimo:
+                # Demanda crítica: vai derrubar estoque ao nível mínimo ou abaixo
+                return self._build_result(
+                    item, ItemStatus.ABAIXO_MINIMO, demanda_liquida, alvo,
+                    total_solicitado=qtd_total, saldo=saldo,
+                    motivo_sugestao=(
+                        f"Estoque acima do ideal, mas demanda aprovada ({qtd_total}) "
+                        f"depletaria abaixo do mínimo — qtd {demanda_liquida}: demanda líquida"
+                    ),
+                )
+            if saldo_previsto <= item.estoque_ideal and demanda_liquida > 0:
+                # Demanda reduz estoque à zona de atenção e ainda requer compra
+                return self._build_result(
+                    item, ItemStatus.ABAIXO_IDEAL, demanda_liquida, alvo,
+                    total_solicitado=qtd_total, saldo=saldo,
+                    motivo_sugestao=(
+                        f"Estoque acima do ideal, mas demanda aprovada ({qtd_total}) "
+                        f"reduz à zona de atenção — qtd {demanda_liquida}: demanda líquida"
+                    ),
+                )
+
+        return self._build_result(
+            item, ItemStatus.OK, 0, alvo,
+            total_solicitado=qtd_total, saldo=saldo,
+            motivo_sugestao="Estoque adequado",
+        )
 
     def _build_result(
         self,
@@ -230,6 +328,7 @@ class StockAnalyzer:
         alvo: Optional[int],
         total_solicitado: int = 0,
         saldo: Optional[int] = None,
+        motivo_sugestao: str = "",
     ) -> AnalysisResult:
         valor_estimado = None
         if item.preco_unitario is not None and qtd_recomendar > 0:
@@ -253,6 +352,7 @@ class StockAnalyzer:
             alvo_reposicao=alvo,
             total_solicitado=total_solicitado,
             saldo_pos_atendimento=saldo if saldo is not None else item.qtd_atual,
+            motivo_sugestao=motivo_sugestao,
         )
 
     def run(self, items: list[ItemRecord]) -> list[AnalysisResult]:

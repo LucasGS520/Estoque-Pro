@@ -62,6 +62,7 @@ class SolicitacaoMaterialCreate(BaseModel):
     solicitante: str
     quantidade_solicitada: int
     observacao: Optional[str] = None
+    urgente: bool = False
     periodo_referencia: date
 
     @model_validator(mode="after")

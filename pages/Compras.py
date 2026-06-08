@@ -31,8 +31,8 @@ from services.compras_service import (
 from documents.lista_compras import gerar_lista_compras
 from services.estoque_service import get_categorias
 
-setup_page("Compras", "🛒")
-page_header("Compras", subtitle="Governança da necessidade de compra.")
+setup_page("Análise de Compras", "🛒")
+page_header("Análise de Compras", subtitle="Preparação inteligente da lista de compras.")
 
 # ── CSS: st.radio como abas (mesmo padrão de todas as outras páginas) ──────────
 st.markdown("""
@@ -189,18 +189,39 @@ else:
             icon="⚠️",
         )
 
+# Auto-consolidação baseada em navegação de aba:
+# - Navegar PARA "Consolidação" → recalcula imediatamente
+# - Sem dados no período atual → recalcula imediatamente
+# - Interações dentro da aba (salvar, filtrar) → não recalcula
+_aba_sel = st.session_state.get("compras_aba", "Painel de Reposição")
+_aba_anterior = st.session_state.get("_compras_aba_anterior")
+_navegou_para_consolidacao = (
+    _aba_sel == "Consolidação" and _aba_anterior != "Consolidação"
+)
+# Atualiza _aba_anterior antes de qualquer branch para preservar estado correto
+st.session_state["_compras_aba_anterior"] = _aba_sel
+
+if _periodo_tipo == "atual" and (_navegou_para_consolidacao or not itens_lista) and not consolidar:
+    with st.spinner("Atualizando análise..."):
+        with SessionLocal() as _s:
+            consolidar_periodo(_s, periodo)
+    # Recarrega inline — sem st.rerun() para não resetar o state do radio widget
+    with SessionLocal() as _s:
+        itens_lista = get_consolidacao_periodo(_s, periodo)
+
 if consolidar:
     _aba_atual = st.session_state.get("compras_aba", "Painel de Reposição")
-    with st.spinner("Analisando período..."):
+    with st.spinner("Recalculando análise..."):
         with SessionLocal() as _s:
             results, summary = consolidar_periodo(_s, periodo)
+    st.session_state["compras_aba"] = _aba_atual
+    st.session_state["_compras_aba_anterior"] = _aba_atual
     st.success(
         f"Análise de **{periodo_label}** concluída — "
         f"{summary.itens_zerados} zerado(s) · "
         f"{summary.itens_abaixo_minimo} abaixo do mínimo · "
         f"{summary.itens_abaixo_ideal} abaixo do ideal"
     )
-    st.session_state["compras_aba"] = _aba_atual
     st.rerun()
 
 # ── Navegação por abas ────────────────────────────────────────────────────────
@@ -335,13 +356,15 @@ elif aba == "Solicitações e Pendências":
         n_novos       = sum(1 for s in todas_sols if s.status in {"novo_item", "pendente_cadastro"})
         n_sem_param   = sum(1 for s in todas_sols if s.status in {"sem_parametros", "pendente_parametrizacao"})
 
-        col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
+        n_urgentes = sum(1 for s in todas_sols if s.urgente)
+        col_m1, col_m2, col_m3, col_m4, col_m5, col_m6, col_m7 = st.columns(7)
         col_m1.metric("📋 Formulários",      n_formularios)
-        col_m2.metric("⏳ Para revisar",     n_prontos)
-        col_m3.metric("✅ Aprovadas",        n_aprovadas)
-        col_m4.metric("❌ Rejeitadas",       n_rejeitadas)
-        col_m5.metric("🆕 Novos Itens",      n_novos)
-        col_m6.metric("⚙️ Sem Parâmetros",   n_sem_param)
+        col_m2.metric("🔴 Urgentes",         n_urgentes)
+        col_m3.metric("⏳ Para revisar",     n_prontos)
+        col_m4.metric("✅ Aprovadas",        n_aprovadas)
+        col_m5.metric("❌ Rejeitadas",       n_rejeitadas)
+        col_m6.metric("🆕 Novos Itens",      n_novos)
+        col_m7.metric("⚙️ Sem Parâmetros",   n_sem_param)
 
         if n_aprovadas > 0 and not _sol_readonly:
             st.info(
@@ -371,12 +394,14 @@ elif aba == "Solicitações e Pendências":
 
         def _resumo_grupo(sols: list) -> str:
             partes = []
+            n_u = sum(1 for s in sols if s.urgente)
             n_v = sum(1 for s in sols if s.status == "validada")
             n_a = sum(1 for s in sols if s.status == "aprovada")
             n_r = sum(1 for s in sols if s.status == "rejeitada")
             n_n = sum(1 for s in sols if s.status in {"novo_item", "pendente_cadastro"})
             n_s = sum(1 for s in sols if s.status in {"sem_parametros", "pendente_parametrizacao"})
             n_p = sum(1 for s in sols if s.status == "pendente")
+            if n_u: partes.append(f"🔴 {n_u} urgente(s)")
             if n_v: partes.append(f"⏳ {n_v} p/ revisar")
             if n_a: partes.append(f"✅ {n_a} aprovado(s)")
             if n_r: partes.append(f"❌ {n_r} rejeitado(s)")
@@ -426,13 +451,17 @@ elif aba == "Solicitações e Pendências":
                 ch4.caption("Status")
 
                 for sol in sols:
-                    nome_item = sol.item.nome if sol.item else (sol.nome_item_livre or "—")
-                    obs       = sol.observacao or "—"
+                    nome_item    = sol.item.nome if sol.item else (sol.nome_item_livre or "—")
+                    obs          = sol.observacao or "—"
+                    urgente_html = (
+                        " <span style='color:#dc2626;font-size:11px;font-weight:700;'>🔴 URGENTE</span>"
+                        if sol.urgente else ""
+                    )
                     if _sol_readonly:
                         c1, c2, c3, c4 = st.columns([4, 1, 3, 2])
                     else:
                         c1, c2, c3, c4, c_acao, c_rm = st.columns([4, 1, 3, 2, 1, 1])
-                    c1.markdown(f"**{nome_item}**")
+                    c1.markdown(f"**{nome_item}**{urgente_html}", unsafe_allow_html=True)
                     c2.markdown(str(sol.quantidade_solicitada))
                     c3.caption(obs if obs != "—" else "")
                     c4.markdown(_badge(sol.status), unsafe_allow_html=True)
@@ -506,7 +535,7 @@ elif aba == "Solicitações e Pendências":
                     with col_del_doc:
                         if not _aguard_confirm:
                             if st.button(
-                                "🗑 Excluir Formulário",
+                                "Excluir Formulário",
                                 key=f"del_doc_{setor_nome}_{solicitante}",
                                 use_container_width=True,
                                 help="Remove todos os itens deste formulário permanentemente",
@@ -604,7 +633,8 @@ elif aba == "Consolidação":
                     f"resolva em **Solicitações e Pendências** e rode novamente a análise."
                 )
             st.caption(
-                "Edite 'Qtd Final' e 'Motivo' quando necessário. "
+                "Edite 'Qtd Final' e 'Observação' quando necessário. "
+                "O campo 'Motivo do Sistema' explica o raciocínio por trás da quantidade sugerida. "
                 "Marque 'Incluir na Lista' e clique em Salvar para aprovar."
             )
 
@@ -626,7 +656,8 @@ elif aba == "Consolidação":
                         else x.quantidade_sugerida
                     ),
                     "Incluir na Lista": x.incluir_na_lista_final,
-                    "Motivo": x.motivo or "",
+                    "Motivo do Sistema": x.motivo_sugestao or "—",
+                    "Observação": x.observacao or "",
                 })
 
             df_ed = pd.DataFrame(rows_ed)
@@ -640,9 +671,10 @@ elif aba == "Consolidação":
                 "Ideal":            st.column_config.NumberColumn("Ideal", disabled=True),
                 "Solicitado":       st.column_config.NumberColumn("Solicitado", disabled=True),
                 "Qtd Sugerida":     st.column_config.NumberColumn("Qtd Sugerida", disabled=True),
-                "Qtd Final":        st.column_config.NumberColumn("Qtd Final", min_value=0),
-                "Incluir na Lista": st.column_config.CheckboxColumn("Incluir na Lista"),
-                "Motivo":           st.column_config.TextColumn("Motivo"),
+                "Qtd Final":           st.column_config.NumberColumn("Qtd Final", min_value=0),
+                "Incluir na Lista":    st.column_config.CheckboxColumn("Incluir na Lista"),
+                "Motivo do Sistema":   st.column_config.TextColumn("Motivo do Sistema", disabled=True),
+                "Observação":          st.column_config.TextColumn("Observação"),
             }
             if _consolidacao_readonly:
                 st.dataframe(
@@ -665,10 +697,10 @@ elif aba == "Consolidação":
                     for _, row in edited_df.iterrows():
                         lista_id = int(row["_id"])
                         qtd_final = int(row["Qtd Final"])
-                        motivo = str(row["Motivo"]).strip() or None
+                        observacao = str(row["Observação"]).strip() or None
                         incluir = bool(row["Incluir na Lista"])
                         if incluir:
-                            aprovar_item(_s, lista_id, qtd_final, motivo)
+                            aprovar_item(_s, lista_id, qtd_final, observacao)
                         else:
                             remover_da_lista(_s, lista_id)
                 st.success("Alterações salvas com sucesso.")
@@ -743,7 +775,7 @@ elif aba == "Consolidação":
                     if x.quantidade_final_definida is not None
                     else x.quantidade_sugerida
                 ),
-                "motivo": x.motivo or "—",
+                "observacao": x.observacao or "—",
                 "fornecedor": x.fornecedor_sugerido.nome if x.fornecedor_sugerido else "—",
                 "valor_est": x.valor_estimado,
                 "estoque_atual": x.estoque_atual_snap,
@@ -769,7 +801,7 @@ elif aba == "Consolidação":
                 "Categoria": info["categoria"],
                 "Qtd Sugerida": info["qtd_sugerida"],
                 "Qtd Final": info["qtd_final"],
-                "Motivo": info["motivo"],
+                "Observação": info["observacao"],
                 "Fornecedor": info["fornecedor"],
                 "Valor Est.": fmt_brl(info["valor_est"]) if info["valor_est"] else "—",
             }
