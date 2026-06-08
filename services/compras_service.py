@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 from core.engine import (
     AnalysisResult, AnalysisSummary, ItemRecord, SolicitacaoRecord, StockAnalyzer,
 )
-from core.models import Fornecedor, Item, ItemListaCompra, SnapshotAnalise, SolicitacaoMaterial
+from core.models import Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial
 from core.schemas import SolicitacaoMaterialCreate
 from services.fornecedor_service import get_best_price
 
@@ -27,6 +27,21 @@ from services.fornecedor_service import get_best_price
 def _item_to_record(item: Item, session: Session) -> ItemRecord:
     """Converte um `Item` ORM em `ItemRecord` para o motor de análise."""
     melhor_preco = get_best_price(session, item.id)
+
+    revisao = (
+        session.query(RevisaoMensal)
+        .filter(RevisaoMensal.item_id == item.id)
+        .order_by(RevisaoMensal.criado_em.desc())
+        .first()
+    )
+    margem = None
+    if (
+        revisao
+        and revisao.consumo_mediana_diario is not None
+        and revisao.intervalo_mediano_dias is not None
+    ):
+        margem = revisao.consumo_mediana_diario * revisao.intervalo_mediano_dias
+
     return ItemRecord(
         item_id=item.id,
         nome=item.nome,
@@ -37,6 +52,7 @@ def _item_to_record(item: Item, session: Session) -> ItemRecord:
         preco_unitario=melhor_preco.preco_unitario if melhor_preco else None,
         fornecedor_sugerido=melhor_preco.fornecedor.nome if melhor_preco else None,
         fornecedor_sugerido_id=melhor_preco.fornecedor_id if melhor_preco else None,
+        margem_operacional=margem,
     )
 
 
@@ -384,10 +400,9 @@ def get_consolidacao_periodo(
 ) -> list[ItemListaCompra]:
     """Retorna todos os itens consolidados de um período, ordenados por status."""
     _STATUS_SORT = {
-        "zerado": 0, "abaixo_minimo": 1, "sem_parametro": 2,
-        "excesso": 3, "ok": 4,
+        "zerado": 0, "abaixo_minimo": 1, "abaixo_ideal": 2, "sem_parametro": 3, "ok": 4,
         # Legado (registros anteriores à migração)
-        "comprar": 1, "sem_minimo_definido": 2,
+        "comprar": 1, "sem_minimo_definido": 3, "excesso": 4,
     }
     items = (
         session.query(ItemListaCompra)
@@ -432,15 +447,10 @@ def aprovar_item(
     qtd_final: int,
     motivo: Optional[str] = None,
 ) -> ItemListaCompra:
-    """Aprova um item para a lista final com quantidade e motivo definidos.
-
-    Motivo é obrigatório quando qtd_final difere de quantidade_sugerida.
-    """
+    """Aprova um item para a lista final com quantidade e motivo definidos."""
     lista = session.get(ItemListaCompra, lista_id)
     if lista is None:
         raise ValueError(f"ItemListaCompra {lista_id} não encontrado")
-    if qtd_final != lista.quantidade_sugerida and not motivo:
-        raise ValueError("Motivo é obrigatório quando a quantidade final difere da sugerida")
     lista.quantidade_final_definida = qtd_final
     lista.motivo = motivo
     lista.incluir_na_lista_final = True

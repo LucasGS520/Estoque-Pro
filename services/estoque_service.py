@@ -407,18 +407,19 @@ def delete_item(session: Session, item_id: int) -> None:
     session.commit()
 
 
+def count_itens_categoria(session: Session, cat_id: int) -> int:
+    return session.query(Item).filter_by(categoria_id=cat_id).count()
+
+
 def delete_categoria(session: Session, cat_id: int) -> None:
-    """Remove uma categoria somente quando ela não possui itens vinculados."""
+    """Remove uma categoria e todos os itens vinculados a ela (cascade)."""
     cat = session.query(Categoria).filter_by(id=cat_id).first()
     if not cat:
         raise ValueError(f"Categoria {cat_id} não encontrada")
 
-    tem_itens = session.query(Item).filter_by(categoria_id=cat_id).first()
-    if tem_itens:
-        raise ValueError(
-            "Não é possível remover uma categoria que possui itens. "
-            "Remova ou mova os itens antes de excluir a categoria."
-        )
+    itens = session.query(Item).filter_by(categoria_id=cat_id).all()
+    for item in itens:
+        session.delete(item)
 
     session.delete(cat)
     session.commit()

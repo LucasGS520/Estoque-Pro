@@ -948,10 +948,20 @@ elif tab_sel == "Editar":
                     st.session_state[f"confirm_del_cat_{cat_ec_id}"] = True
 
                 if st.session_state.get(f"confirm_del_cat_{cat_ec_id}"):
-                    st.warning(
-                        f"Remover **{cat_ec_sel_nome}**? "
-                        "A remoção só é permitida se não houver itens nessa categoria."
-                    )
+                    with SessionLocal() as _s_check:
+                        _n_itens_cat = estoque_service.count_itens_categoria(_s_check, cat_ec_id)
+                    if _n_itens_cat > 0:
+                        st.warning(
+                            f"A categoria **{cat_ec_sel_nome}** possui **{_n_itens_cat} item(ns)** vinculado(s). "
+                            "Ao confirmar, **todos os itens e seus históricos serão excluídos permanentemente** "
+                            "junto com a categoria. Esta ação não pode ser desfeita.",
+                            icon="⚠️",
+                        )
+                    else:
+                        st.warning(
+                            f"Remover a categoria **{cat_ec_sel_nome}**? Esta ação não pode ser desfeita.",
+                            icon="⚠️",
+                        )
                     col_yes, col_no = st.columns(2)
                     with col_yes:
                         if st.button(

@@ -87,12 +87,13 @@ MESES_PT = {
 _STATUS_LABEL = {
     "zerado":              "Zerado",
     "abaixo_minimo":       "Abaixo do Mínimo",
+    "abaixo_ideal":        "Abaixo do Ideal",
     "ok":                  "OK",
-    "excesso":             "Excesso",
     "sem_parametro":       "Sem Parâmetro",
-    # Legado (registros antigos na BD)
+    # Legado (registros antigos no banco)
     "comprar":             "Abaixo do Mínimo",
     "sem_minimo_definido": "Sem Parâmetro",
+    "excesso":             "OK",
 }
 
 # ── Seletor de período ────────────────────────────────────────────────────────
@@ -197,7 +198,7 @@ if consolidar:
         f"Análise de **{periodo_label}** concluída — "
         f"{summary.itens_zerados} zerado(s) · "
         f"{summary.itens_abaixo_minimo} abaixo do mínimo · "
-        f"{summary.itens_excesso} em excesso"
+        f"{summary.itens_abaixo_ideal} abaixo do ideal"
     )
     st.session_state["compras_aba"] = _aba_atual
     st.rerun()
@@ -223,18 +224,18 @@ if aba == "Painel de Reposição":
             "Cadastre itens em Estoque para visualizar o painel de reposição.",
         )
     else:
-        zerados      = [r for r in painel_lista if r.status.value == "zerado"]
-        abaixo_min   = [r for r in painel_lista if r.status.value == "abaixo_minimo"]
-        excesso_list = [r for r in painel_lista if r.status.value == "excesso"]
-        ok_list      = [r for r in painel_lista if r.status.value == "ok"]
-        sem_param    = [r for r in painel_lista if r.status.value == "sem_parametro"]
+        zerados         = [r for r in painel_lista if r.status.value == "zerado"]
+        abaixo_min      = [r for r in painel_lista if r.status.value == "abaixo_minimo"]
+        abaixo_ideal_list = [r for r in painel_lista if r.status.value == "abaixo_ideal"]
+        ok_list         = [r for r in painel_lista if r.status.value == "ok"]
+        sem_param       = [r for r in painel_lista if r.status.value == "sem_parametro"]
 
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Zerados",         len(zerados))
-        c2.metric("Abaixo do Mín.",  len(abaixo_min))
-        c3.metric("Excesso",         len(excesso_list))
-        c4.metric("OK",              len(ok_list))
-        c5.metric("Sem Parâmetro",   len(sem_param))
+        c1.metric("Zerados",          len(zerados))
+        c2.metric("Abaixo do Mín.",   len(abaixo_min))
+        c3.metric("Abaixo do Ideal",  len(abaixo_ideal_list))
+        c4.metric("OK",               len(ok_list))
+        c5.metric("Sem Parâmetro",    len(sem_param))
 
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
@@ -249,12 +250,13 @@ if aba == "Painel de Reposição":
                 "Todos os alertas": None,
                 "Zerado": "zerado",
                 "Abaixo do Mínimo": "abaixo_minimo",
+                "Abaixo do Ideal": "abaixo_ideal",
                 "Sem Parâmetro": "sem_parametro",
                 "OK": "ok",
             }
             status_sel = st.selectbox("Status", list(status_opcoes.keys()), key="painel_status")
 
-        STATUS_PAINEL = {"zerado", "abaixo_minimo", "sem_parametro", "ok"}
+        STATUS_PAINEL = {"zerado", "abaixo_minimo", "abaixo_ideal", "sem_parametro", "ok"}
         itens_painel = [r for r in painel_lista if r.status.value in STATUS_PAINEL]
 
         busca_lower = busca.strip().lower()
@@ -284,18 +286,6 @@ if aba == "Painel de Reposição":
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-        if excesso_list:
-            with st.expander(f"⚠️ {len(excesso_list)} item(ns) com excesso de estoque"):
-                rows_exc = []
-                for r in excesso_list:
-                    rows_exc.append({
-                        "Item": r.nome,
-                        "Categoria": r.categoria,
-                        "Estoque": r.qtd_atual,
-                        "Ideal": r.estoque_ideal,
-                    })
-                st.dataframe(pd.DataFrame(rows_exc), use_container_width=True, hide_index=True)
-                st.caption("Itens com estoque acima do ideal. Não entram na lista de compras.")
 
 # =============================================================================
 # ABA 2 — SOLICITAÇÕES
@@ -416,7 +406,8 @@ elif aba == "Solicitações e Pendências":
                 f"  —  {n_itens} item(ns)  ·  {resumo}{sufixo_label}"
             )
 
-            with st.expander(label_exp):
+            _exp_key = f"exp_open_{setor_nome}_{solicitante}"
+            with st.expander(label_exp, expanded=st.session_state.get(_exp_key, False)):
                 # ── Caption de estado ─────────────────────────────────────────
                 if concluido:
                     st.caption("✅ Revisão concluída. Execute Análise Mensal para incluir as aprovações.")
@@ -451,19 +442,23 @@ elif aba == "Solicitações e Pendências":
                             if c_acao.button("✓", key=f"aceitar_sol_{sol.id}", help="Aprovar esta solicitação", use_container_width=True):
                                 with SessionLocal() as _s:
                                     aprovar_solicitacao(_s, sol.id)
+                                st.session_state[_exp_key] = True
                                 st.rerun()
                             if c_rm.button("✗", key=f"rejeitar_sol_{sol.id}", help="Rejeitar esta solicitação", use_container_width=True):
                                 with SessionLocal() as _s:
                                     rejeitar_solicitacao(_s, sol.id)
+                                st.session_state[_exp_key] = True
                                 st.rerun()
                         elif sol.status in {"aprovada", "rejeitada"}:
                             if c_acao.button("↩", key=f"desfazer_sol_{sol.id}", help="Desfazer — reverter para revisão", use_container_width=True):
                                 with SessionLocal() as _s:
                                     revertir_solicitacao(_s, sol.id)
+                                st.session_state[_exp_key] = True
                                 st.rerun()
                             if c_rm.button("🗑️", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
                                 with SessionLocal() as _s:
                                     deletar_solicitacao(_s, sol.id)
+                                st.session_state[_exp_key] = True
                                 st.rerun()
                         else:
                             if sol.status in {"novo_item", "pendente_cadastro"}:
@@ -479,6 +474,7 @@ elif aba == "Solicitações e Pendências":
                             if c_rm.button("🗑️", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
                                 with SessionLocal() as _s:
                                     deletar_solicitacao(_s, sol.id)
+                                st.session_state[_exp_key] = True
                                 st.rerun()
 
                 # ── Ações do formulário (apenas no período atual) ─────────────
@@ -502,6 +498,7 @@ elif aba == "Solicitações e Pendências":
                                 with SessionLocal() as _s:
                                     for sol_v in validadas_grupo:
                                         aprovar_solicitacao(_s, sol_v.id)
+                                st.session_state[_exp_key] = True
                                 st.rerun()
                         elif aprovadas_grupo:
                             st.success("✅ Pedidos aprovados")
@@ -515,6 +512,7 @@ elif aba == "Solicitações e Pendências":
                                 help="Remove todos os itens deste formulário permanentemente",
                             ):
                                 st.session_state[_confirm_key] = True
+                                st.session_state[_exp_key] = True
                                 st.rerun()
                         else:
                             st.caption("▼ Confirme abaixo")
@@ -547,6 +545,7 @@ elif aba == "Solicitações e Pendências":
                             use_container_width=True,
                         ):
                             st.session_state[_confirm_key] = False
+                            st.session_state[_exp_key] = True
                             st.rerun()
 
 
@@ -587,8 +586,10 @@ elif aba == "Consolidação":
     else:
         STATUS_ATIVOS = {"zerado", "abaixo_minimo", "comprar"}
 
-        principais    = [x for x in itens_lista if x.status in STATUS_ATIVOS]
-        sem_param_conso = [x for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"}]
+        principais       = [x for x in itens_lista if x.status in STATUS_ATIVOS]
+        abaixo_ideal_sol = [x for x in itens_lista if x.status == "abaixo_ideal" and x.total_solicitado > 0]
+        abaixo_ideal_info = [x for x in itens_lista if x.status == "abaixo_ideal" and x.total_solicitado == 0]
+        sem_param_conso  = [x for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"}]
 
         if principais:
             section_title("Itens para Decisão de Compra")
@@ -624,24 +625,24 @@ elif aba == "Consolidação":
                         if x.quantidade_final_definida is not None
                         else x.quantidade_sugerida
                     ),
-                    "Motivo": x.motivo or "",
                     "Incluir na Lista": x.incluir_na_lista_final,
+                    "Motivo": x.motivo or "",
                 })
 
             df_ed = pd.DataFrame(rows_ed)
             col_config = {
-                "_id":            st.column_config.NumberColumn("ID", disabled=True, width="small"),
-                "Status":         st.column_config.TextColumn("Status", disabled=True),
-                "Item":           st.column_config.TextColumn("Item", disabled=True, width="medium"),
-                "Categoria":      st.column_config.TextColumn("Categoria", disabled=True),
-                "Estoque":        st.column_config.NumberColumn("Estoque", disabled=True, width="small"),
-                "Mínimo":         st.column_config.NumberColumn("Mínimo", disabled=True, width="small"),
-                "Ideal":          st.column_config.NumberColumn("Ideal", disabled=True, width="small"),
-                "Solicitado":     st.column_config.NumberColumn("Solicitado", disabled=True, width="small"),
-                "Qtd Sugerida":   st.column_config.NumberColumn("Qtd Sugerida", disabled=True, width="small"),
-                "Qtd Final":      st.column_config.NumberColumn("Qtd Final", min_value=0, width="small"),
-                "Motivo":         st.column_config.TextColumn("Motivo", width="large"),
-                "Incluir na Lista": st.column_config.CheckboxColumn("Incluir na Lista", width="small"),
+                "_id":              st.column_config.NumberColumn("ID", disabled=True),
+                "Status":           st.column_config.TextColumn("Status", disabled=True),
+                "Item":             st.column_config.TextColumn("Item", disabled=True),
+                "Categoria":        st.column_config.TextColumn("Categoria", disabled=True),
+                "Estoque":          st.column_config.NumberColumn("Estoque", disabled=True),
+                "Mínimo":           st.column_config.NumberColumn("Mínimo", disabled=True),
+                "Ideal":            st.column_config.NumberColumn("Ideal", disabled=True),
+                "Solicitado":       st.column_config.NumberColumn("Solicitado", disabled=True),
+                "Qtd Sugerida":     st.column_config.NumberColumn("Qtd Sugerida", disabled=True),
+                "Qtd Final":        st.column_config.NumberColumn("Qtd Final", min_value=0),
+                "Incluir na Lista": st.column_config.CheckboxColumn("Incluir na Lista"),
+                "Motivo":           st.column_config.TextColumn("Motivo"),
             }
             if _consolidacao_readonly:
                 st.dataframe(
@@ -660,38 +661,53 @@ elif aba == "Consolidação":
                 )
 
             if not _consolidacao_readonly and st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
-                sug_map = {
-                    x.id: (x.quantidade_sugerida, x.item.nome if x.item else str(x.id))
-                    for x in principais
-                }
-                erros_salvar = []
-                for _, row in edited_df.iterrows():
-                    lista_id = int(row["_id"])
-                    qtd_final = int(row["Qtd Final"])
-                    motivo = str(row["Motivo"]).strip() or None
-                    incluir = bool(row["Incluir na Lista"])
-                    qtd_sug, item_nome = sug_map.get(lista_id, (0, str(lista_id)))
-                    if incluir and qtd_final != qtd_sug and not motivo:
-                        erros_salvar.append(
-                            f"**{item_nome}**: motivo obrigatório quando a quantidade "
-                            f"final ({qtd_final}) difere da sugerida ({qtd_sug})."
-                        )
-                if erros_salvar:
-                    for e in erros_salvar:
-                        st.error(e)
-                else:
-                    with SessionLocal() as _s:
-                        for _, row in edited_df.iterrows():
-                            lista_id = int(row["_id"])
-                            qtd_final = int(row["Qtd Final"])
-                            motivo = str(row["Motivo"]).strip() or None
-                            incluir = bool(row["Incluir na Lista"])
-                            if incluir:
-                                aprovar_item(_s, lista_id, qtd_final, motivo)
-                            else:
-                                remover_da_lista(_s, lista_id)
-                    st.success("Alterações salvas com sucesso.")
-                    st.rerun()
+                with SessionLocal() as _s:
+                    for _, row in edited_df.iterrows():
+                        lista_id = int(row["_id"])
+                        qtd_final = int(row["Qtd Final"])
+                        motivo = str(row["Motivo"]).strip() or None
+                        incluir = bool(row["Incluir na Lista"])
+                        if incluir:
+                            aprovar_item(_s, lista_id, qtd_final, motivo)
+                        else:
+                            remover_da_lista(_s, lista_id)
+                st.success("Alterações salvas com sucesso.")
+                st.rerun()
+
+        if abaixo_ideal_sol:
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            section_title("Itens Abaixo do Ideal com Solicitação Aprovada")
+            st.caption(
+                "Estes itens estão acima do mínimo, mas abaixo do ideal e possuem "
+                "solicitações aprovadas. Verifique se é necessário incluir na compra."
+            )
+            rows_ai = []
+            for x in abaixo_ideal_sol:
+                rows_ai.append({
+                    "Status": _STATUS_LABEL.get(x.status, x.status),
+                    "Item": x.item.nome if x.item else "—",
+                    "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                    "Estoque": x.estoque_atual_snap,
+                    "Mínimo": x.estoque_minimo_snap,
+                    "Ideal": x.estoque_ideal_snap,
+                    "Solicitado": x.total_solicitado,
+                    "Qtd Sugerida": x.quantidade_sugerida,
+                })
+            st.dataframe(pd.DataFrame(rows_ai), use_container_width=True, hide_index=True)
+
+        if abaixo_ideal_info:
+            with st.expander(f"ℹ️ {len(abaixo_ideal_info)} item(ns) abaixo do ideal sem solicitação"):
+                rows_aii = []
+                for x in abaixo_ideal_info:
+                    rows_aii.append({
+                        "Item": x.item.nome if x.item else "—",
+                        "Categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
+                        "Estoque": x.estoque_atual_snap,
+                        "Mínimo": x.estoque_minimo_snap,
+                        "Ideal": x.estoque_ideal_snap,
+                    })
+                st.dataframe(pd.DataFrame(rows_aii), use_container_width=True, hide_index=True)
+                st.caption("Itens em zona de atenção — entre o mínimo e o ideal. Sem solicitação aprovada no período.")
 
         if not principais:
             if sem_param_conso:
@@ -708,7 +724,7 @@ elif aba == "Consolidação":
                     f"a **Análise Mensal de Compras** para incluí-las.",
                     icon="⚠️",
                 )
-            else:
+            elif not abaixo_ideal_sol and not abaixo_ideal_info:
                 empty_state("✅", "Todos os itens estão com estoque adequado para o período.")
 
     # ── Lista Final Aprovada ──────────────────────────────────────────────────
