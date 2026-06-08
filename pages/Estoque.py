@@ -15,10 +15,17 @@ from core.ui import setup_page, page_header, section_title
 from services import estoque_service, fornecedor_service, calculos_service
 
 
-def _validar_telefone(tel: str) -> bool:
-    if not tel.strip():
-        return True
-    return bool(re.match(r'^\(\d{2}\)\s?\d{4,5}-\d{4}$', tel.strip()))
+def _formatar_telefone(tel: str):
+    """Extrai dígitos e formata (XX) XXXX-XXXX ou (XX) XXXXX-XXXX.
+    Retorna string formatada, "" se vazio, ou None se dígitos insuficientes."""
+    digits = re.sub(r'\D', '', tel)
+    if not digits:
+        return ""
+    if len(digits) == 10:
+        return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
+    if len(digits) == 11:
+        return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+    return None
 
 
 def _validar_email(email: str) -> bool:
@@ -190,7 +197,7 @@ elif tab_sel == "Registrar Movimentação":
     section_title("Dados da movimentação")
     col1, col2 = st.columns(2)
     with col1:
-        tipo_mov = st.selectbox("Tipo", ["entrada", "saida"], key="mov_tipo")
+        tipo_mov = st.selectbox("Tipo", ["entrada", "saida"], key=f"mov_tipo_{_mov_v}")
     with col2:
         qtd_mov = st.number_input("Quantidade", min_value=1, value=1, key=f"mov_qtd_{_mov_v}")
 
@@ -343,7 +350,7 @@ elif tab_sel == "Editar":
                         with col_c:
                             ni_minimo = st.number_input("Mínimo manual", min_value=0, value=0, key=f"ni_minimo_{_ni_v}")
                         with col_d:
-                            ni_ideal = st.number_input("Ideal manual", min_value=0, value=0, key=f"ni_ideal_{_ni_v}")
+                            ni_ideal = st.number_input("Ideal manual", min_value=ni_minimo, value=ni_minimo, key=f"ni_ideal_{_ni_v}")
                     with SessionLocal() as session:
                         forn_opts_ni = fornecedor_service.get_all_fornecedores(session)
                         forn_map_ni = {f.nome: f.id for f in forn_opts_ni}
@@ -362,8 +369,10 @@ elif tab_sel == "Editar":
                             st.error("Selecione uma categoria.")
                         elif not ni_nome.strip():
                             st.error("Nome não pode ficar em branco.")
-                        elif ni_minimo > 0 and ni_ideal > 0 and ni_ideal < ni_minimo:
-                            st.error("Ideal manual não pode ser menor que Mínimo manual.")
+                        elif ni_ideal > 0 and ni_minimo == 0:
+                            st.error("Se informar o Ideal, informe também o Mínimo.")
+                        elif ni_ideal > 0 and ni_ideal < ni_minimo:
+                            st.error(f"Ideal ({ni_ideal}) não pode ser menor que Mínimo ({ni_minimo}).")
                         else:
                             try:
                                 with st.spinner("Salvando..."):
@@ -549,30 +558,28 @@ elif tab_sel == "Editar":
                                     st.session_state[f"confirm_rem_manual_{item_ei_id}"] = True
 
                         if st.session_state.get(f"show_manual_form_{item_ei_id}"):
-                            with st.form(key=f"form_manual_{item_ei_id}"):
-                                st.markdown("**Definir valores manuais**")
-                                col_m1, col_m2 = st.columns(2)
-                                with col_m1:
-                                    novo_min = st.number_input(
-                                        "Mínimo manual", min_value=0,
-                                        value=ei_minimo_manual or ei_minimo_vigente,
-                                        key=f"manual_min_{item_ei_id}",
-                                    )
-                                with col_m2:
-                                    novo_ideal = st.number_input(
-                                        "Ideal manual", min_value=0,
-                                        value=ei_ideal_manual or ei_ideal_vigente,
-                                        key=f"manual_ideal_{item_ei_id}",
-                                    )
-                                col_fs, col_fc = st.columns(2)
-                                with col_fs:
-                                    submitted_manual = st.form_submit_button("Salvar manual", type="primary", use_container_width=True)
-                                with col_fc:
-                                    cancel_manual = st.form_submit_button("Cancelar", use_container_width=True)
-
-                                if submitted_manual:
-                                    if novo_ideal > 0 and novo_min > 0 and novo_ideal < novo_min:
-                                        st.error("Ideal não pode ser menor que Mínimo.")
+                            st.markdown("**Definir valores manuais**")
+                            col_m1, col_m2 = st.columns(2)
+                            with col_m1:
+                                novo_min = st.number_input(
+                                    "Mínimo manual", min_value=0,
+                                    value=ei_minimo_manual or ei_minimo_vigente or 0,
+                                    key=f"manual_min_{item_ei_id}",
+                                )
+                            with col_m2:
+                                _ideal_default = max(ei_ideal_manual or ei_ideal_vigente or 0, novo_min)
+                                novo_ideal = st.number_input(
+                                    "Ideal manual", min_value=novo_min,
+                                    value=_ideal_default,
+                                    key=f"manual_ideal_{item_ei_id}",
+                                )
+                            col_fs, col_fc = st.columns(2)
+                            with col_fs:
+                                if st.button("Salvar manual", type="primary", use_container_width=True, key=f"btn_save_manual_{item_ei_id}"):
+                                    if novo_ideal > 0 and novo_min == 0:
+                                        st.error("Se informar o Ideal, informe também o Mínimo.")
+                                    elif novo_ideal > 0 and novo_ideal < novo_min:
+                                        st.error(f"Ideal ({novo_ideal}) não pode ser menor que Mínimo ({novo_min}).")
                                     else:
                                         with SessionLocal() as session:
                                             calculos_service.aplicar_minimo_ideal_manual(
@@ -581,7 +588,8 @@ elif tab_sel == "Editar":
                                         st.session_state.pop(f"show_manual_form_{item_ei_id}", None)
                                         st.session_state["_fb"] = ("success", "Valores manuais definidos.")
                                         st.rerun()
-                                if cancel_manual:
+                            with col_fc:
+                                if st.button("Cancelar", use_container_width=True, key=f"btn_cancel_manual_{item_ei_id}"):
                                     st.session_state.pop(f"show_manual_form_{item_ei_id}", None)
                                     st.rerun()
 
@@ -708,17 +716,18 @@ elif tab_sel == "Editar":
             with st.container(border=True):
                 nf_nome = st.text_input("Nome", key=f"nf_nome_{_nf_v}")
                 nf_contato = st.text_input("Contato", key=f"nf_contato_{_nf_v}")
-                nf_tel = st.text_input("Telefone", key=f"nf_tel_{_nf_v}")
+                nf_tel = st.text_input("Telefone", placeholder="Ex: 11999998888", help="Digite apenas os números com DDD", key=f"nf_tel_{_nf_v}")
                 nf_email = st.text_input("E-mail", key=f"nf_email_{_nf_v}")
                 nf_pref = st.checkbox("Preferencial", key=f"nf_pref_{_nf_v}")
                 nf_ativo = st.checkbox("Ativo", value=True, key=f"nf_ativo_{_nf_v}")
 
                 if st.button("Cadastrar", key="btn_nf_cadastrar", type="primary", use_container_width=True):
                     _erros_nf = []
+                    _nf_tel_fmt = _formatar_telefone(nf_tel)
                     if not nf_nome.strip():
                         _erros_nf.append("Nome não pode ficar em branco.")
-                    if not _validar_telefone(nf_tel):
-                        _erros_nf.append("Telefone inválido. Use o formato (XX) XXXXX-XXXX ou (XX) XXXX-XXXX.")
+                    if _nf_tel_fmt is None:
+                        _erros_nf.append("Telefone inválido. Digite 10 ou 11 dígitos com DDD (ex: 11999998888).")
                     if not _validar_email(nf_email):
                         _erros_nf.append("E-mail inválido.")
                     if _erros_nf:
@@ -729,7 +738,7 @@ elif tab_sel == "Editar":
                             with st.spinner("Salvando..."):
                                 with SessionLocal() as session:
                                     forn_criado = fornecedor_service.create_fornecedor(
-                                        session, nf_nome, nf_contato, nf_tel, nf_email, nf_pref, nf_ativo
+                                        session, nf_nome, nf_contato, _nf_tel_fmt, nf_email, nf_pref, nf_ativo
                                     )
                                     forn_nome_criado = forn_criado.nome
                             st.session_state["_nf_v"] = _nf_v + 1
@@ -760,7 +769,8 @@ elif tab_sel == "Editar":
                         "Contato", value=forn_sel["contato_nome"], key=f"ef_{forn_sel_id}_contato"
                     )
                     ef_tel = st.text_input(
-                        "Telefone", value=forn_sel["telefone"], key=f"ef_{forn_sel_id}_tel"
+                        "Telefone", value=forn_sel["telefone"], placeholder="Ex: 11999998888",
+                        help="Digite apenas os números com DDD", key=f"ef_{forn_sel_id}_tel"
                     )
                     ef_email = st.text_input(
                         "E-mail", value=forn_sel["email"], key=f"ef_{forn_sel_id}_email"
@@ -776,10 +786,11 @@ elif tab_sel == "Editar":
                         "Salvar alterações", key="btn_ef_salvar", type="primary", use_container_width=True
                     ):
                         _erros_ef = []
+                        _ef_tel_fmt = _formatar_telefone(ef_tel)
                         if not ef_nome.strip():
                             _erros_ef.append("Nome não pode ficar em branco.")
-                        if not _validar_telefone(ef_tel):
-                            _erros_ef.append("Telefone inválido. Use o formato (XX) XXXXX-XXXX ou (XX) XXXX-XXXX.")
+                        if _ef_tel_fmt is None:
+                            _erros_ef.append("Telefone inválido. Digite 10 ou 11 dígitos com DDD (ex: 11999998888).")
                         if not _validar_email(ef_email):
                             _erros_ef.append("E-mail inválido.")
                         if _erros_ef:
@@ -791,7 +802,7 @@ elif tab_sel == "Editar":
                                     with SessionLocal() as session:
                                         fornecedor_service.update_fornecedor(
                                             session, forn_sel_id,
-                                            ef_nome, ef_contato, ef_tel, ef_email, ef_pref, ef_ativo,
+                                            ef_nome, ef_contato, _ef_tel_fmt, ef_email, ef_pref, ef_ativo,
                                         )
                                 for k in [k for k in st.session_state if k.startswith(f"ef_{forn_sel_id}_")]:
                                     st.session_state.pop(k)
