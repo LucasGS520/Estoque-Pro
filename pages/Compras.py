@@ -17,9 +17,11 @@ from services.compras_service import (
     aplicar_parametros_e_reclassificar,
     aprovar_item,
     aprovar_solicitacao,
+    atualizar_compra_avulsa,
     criar_item_e_vincular,
     desfazer_compra_avulsa,
     get_compras_avulsas_periodo,
+    get_todas_avulsas_periodo,
     rejeitar_solicitacao,
     registrar_compra_avulsa,
     revertir_solicitacao,
@@ -297,7 +299,8 @@ with col_btn:
 
 with SessionLocal() as _s:
     periodos_existentes = get_periodos_com_consolidacao(_s)
-    itens_lista = get_consolidacao_periodo(_s, periodo)
+    itens_lista  = get_consolidacao_periodo(_s, periodo)
+    avulsas_lista = get_todas_avulsas_periodo(_s, periodo)
     painel_lista = get_painel_reposicao(_s)
     cats = get_categorias(_s)
     cat_nomes = ["Todas"] + sorted({r.categoria for r in painel_lista if r.categoria})
@@ -317,19 +320,24 @@ if _periodo_tipo == "futuro":
         icon="🚫",
     )
 elif periodo in periodos_existentes:
-    _ultima_analise = max((x.atualizado_em for x in itens_lista), default=None)
-    _n_total        = len(itens_lista)
-    _n_comprar      = sum(1 for x in itens_lista if x.status in {"zerado", "abaixo_minimo", "comprar"})
-    _n_sem_min      = sum(1 for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"})
-    _n_lista_final  = sum(1 for x in itens_lista if x.incluir_na_lista_final)
-    _data_str       = _ultima_analise.strftime("%d/%m/%Y às %H:%M") if _ultima_analise else "—"
-    _sem_min_str    = f" · ⚠️ {_n_sem_min} sem mínimo/ideal" if _n_sem_min else ""
-    _lock_str       = "  \n🔒 Período encerrado — somente leitura" if _periodo_tipo == "passado" else ""
-    _banner_icon    = "⚠️" if _n_sem_min else "✅"
+    _ultima_analise  = max((x.atualizado_em for x in itens_lista), default=None)
+    _n_total         = len(itens_lista)
+    _n_comprar       = sum(1 for x in itens_lista if x.status in {"zerado", "abaixo_minimo", "comprar"})
+    _n_sem_min       = sum(1 for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"})
+    _n_avulsas       = len(avulsas_lista)
+    _n_lista_final   = (
+        sum(1 for x in itens_lista if x.incluir_na_lista_final)
+        + sum(1 for ca in avulsas_lista if ca.incluir_na_lista_final)
+    )
+    _data_str        = _ultima_analise.strftime("%d/%m/%Y às %H:%M") if _ultima_analise else "—"
+    _sem_min_str     = f" · ⚠️ {_n_sem_min} sem mínimo/ideal" if _n_sem_min else ""
+    _avulsas_str     = f" · 🛒 {_n_avulsas} compra(s) avulsa(s)" if _n_avulsas else ""
+    _lock_str        = "  \n🔒 Período encerrado — somente leitura" if _periodo_tipo == "passado" else ""
+    _banner_icon     = "⚠️" if _n_sem_min else "✅"
     st.info(
         f"**Análise Mensal — {periodo_label}**  \n"
         f"📅 Janela: {_janela_inicio} – {_janela_fim} · Última análise: {_data_str}  \n"
-        f"🔢 {_n_total} item(ns) analisado(s) · {_n_comprar} a comprar{_sem_min_str} · {_n_lista_final} aprovado(s) na lista final{_lock_str}",
+        f"🔢 {_n_total} item(ns) analisado(s) · {_n_comprar} a comprar{_avulsas_str}{_sem_min_str} · {_n_lista_final} aprovado(s) na lista final{_lock_str}",
         icon=_banner_icon,
     )
 else:
@@ -360,7 +368,8 @@ if _periodo_tipo == "atual" and (_navegou_para_consolidacao or not itens_lista) 
             consolidar_periodo(_s, periodo)
     # Recarrega inline — sem st.rerun() para não resetar o state do radio widget
     with SessionLocal() as _s:
-        itens_lista = get_consolidacao_periodo(_s, periodo)
+        itens_lista   = get_consolidacao_periodo(_s, periodo)
+        avulsas_lista = get_todas_avulsas_periodo(_s, periodo)
 
 if consolidar:
     _aba_atual = st.session_state.get("compras_aba", "Painel de Reposição")
@@ -803,7 +812,9 @@ elif aba == "Consolidação":
         para_compra     = [x for x in itens_lista if (x.quantidade_sugerida or 0) > 0]
         sem_param_conso = [x for x in itens_lista if x.status in {"sem_parametro", "sem_minimo_definido"}]
 
-        if para_compra:
+        avulsas_periodo = avulsas_lista
+
+        if para_compra or avulsas_periodo:
             section_title("Itens para Decisão de Compra")
             _avisos_conso = []
             if sem_param_conso:
@@ -824,7 +835,8 @@ elif aba == "Consolidação":
             rows_ed = []
             for x in para_compra:
                 rows_ed.append({
-                    "_id": x.id,
+                    "_id":  x.id,
+                    "_tipo": "lista",
                     "Status": _STATUS_LABEL.get(x.status, x.status),
                     "Item": x.item.nome if x.item else "—",
                     "Estoque": x.estoque_atual_snap,
@@ -840,10 +852,33 @@ elif aba == "Consolidação":
                     "Incluir na Lista": x.incluir_na_lista_final,
                     "Motivo do Sistema": x.motivo_sugestao or "—",
                 })
+            for ca in avulsas_periodo:
+                _motivo_av = (
+                    f"Compra pontual aprovada"
+                    f"{' · Urgente' if ca.urgente else ''}"
+                    f" · Solicitante: {ca.solicitante}"
+                )
+                rows_ed.append({
+                    "_id":  ca.id,
+                    "_tipo": "avulsa",
+                    "Status": "Compra Avulsa",
+                    "Item": ca.nome_item,
+                    "Estoque": float("nan"),
+                    "Mín.": float("nan"),
+                    "Ideal": float("nan"),
+                    "Solicitado": ca.quantidade,
+                    "Qtd Sugerida": float("nan"),
+                    "Qtd Final": ca.quantidade,
+                    "Incluir na Lista": ca.incluir_na_lista_final,
+                    "Motivo do Sistema": _motivo_av,
+                })
 
+            _col_order = ["_id", "Status", "Item", "Estoque", "Mín.", "Ideal",
+                          "Solicitado", "Qtd Sugerida", "Qtd Final", "Incluir na Lista", "Motivo do Sistema"]
             df_ed = pd.DataFrame(rows_ed)
             col_config = {
                 "_id":              st.column_config.NumberColumn("ID", disabled=True),
+                "_tipo":            None,
                 "Status":           st.column_config.TextColumn("Status", disabled=True),
                 "Item":             st.column_config.TextColumn("Item", disabled=True),
                 "Estoque":          st.column_config.NumberColumn("Estoque", disabled=True),
@@ -859,6 +894,7 @@ elif aba == "Consolidação":
                 st.dataframe(
                     df_ed,
                     column_config=col_config,
+                    column_order=_col_order,
                     hide_index=True,
                     use_container_width=True,
                 )
@@ -866,6 +902,7 @@ elif aba == "Consolidação":
                 edited_df = st.data_editor(
                     df_ed,
                     column_config=col_config,
+                    column_order=_col_order,
                     hide_index=True,
                     use_container_width=True,
                     key="consolidacao_editor",
@@ -874,13 +911,16 @@ elif aba == "Consolidação":
             if not _consolidacao_readonly and st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
                 with SessionLocal() as _s:
                     for _, row in edited_df.iterrows():
-                        lista_id = int(row["_id"])
-                        qtd_final = int(row["Qtd Final"])
-                        incluir = bool(row["Incluir na Lista"])
-                        if incluir:
-                            aprovar_item(_s, lista_id, qtd_final, None)
+                        item_id   = int(row["_id"])
+                        qtd_final = int(row["Qtd Final"]) if pd.notna(row["Qtd Final"]) else 0
+                        incluir   = bool(row["Incluir na Lista"])
+                        if row["_tipo"] == "avulsa":
+                            atualizar_compra_avulsa(_s, item_id, quantidade=qtd_final, incluir_na_lista_final=incluir)
                         else:
-                            remover_da_lista(_s, lista_id)
+                            if incluir:
+                                aprovar_item(_s, item_id, qtd_final, None)
+                            else:
+                                remover_da_lista(_s, item_id)
                 st.success("Alterações salvas com sucesso.")
                 st.rerun()
 
@@ -907,7 +947,8 @@ elif aba == "Consolidação":
     section_title("Lista Final Aprovada")
 
     with SessionLocal() as _s:
-        lista_final = get_lista_final(_s, periodo)
+        lista_final  = get_lista_final(_s, periodo)
+        avulsas_final = get_compras_avulsas_periodo(_s, periodo)
         lista_final_info = [
             {
                 "item_nome": x.item.nome if x.item else "—",
@@ -926,6 +967,20 @@ elif aba == "Consolidação":
                 "estoque_ideal": x.estoque_ideal_snap,
             }
             for x in lista_final
+        ] + [
+            {
+                "item_nome": ca.nome_item,
+                "categoria": "—",
+                "qtd_sugerida": None,
+                "qtd_final": ca.quantidade,
+                "observacao": ca.observacao or "—",
+                "fornecedor": "—",
+                "valor_est": None,
+                "estoque_atual": None,
+                "estoque_minimo": None,
+                "estoque_ideal": None,
+            }
+            for ca in avulsas_final
         ]
 
     if not lista_final_info:
@@ -980,26 +1035,4 @@ elif aba == "Consolidação":
             key="download_lista_final",
         )
 
-    # ── Compras Avulsas do Período ────────────────────────────────────────────
-    with SessionLocal() as _s:
-        avulsas = get_compras_avulsas_periodo(_s, periodo)
-
-    if avulsas:
-        st.divider()
-        section_title("Compras Avulsas")
-        st.caption("Itens aprovados como compra pontual — não entram no cadastro de estoque.")
-
-        rows_avulsas = [
-            {
-                "Item": ca.nome_item,
-                "Unidade": ca.unidade,
-                "Qtd": ca.quantidade,
-                "Setor": ca.setor.nome if ca.setor else "—",
-                "Solicitante": ca.solicitante,
-                "Urgente": "🔴 Sim" if ca.urgente else "Não",
-                "Observação": ca.observacao or "—",
-            }
-            for ca in avulsas
-        ]
-        st.dataframe(pd.DataFrame(rows_avulsas), use_container_width=True, hide_index=True)
 

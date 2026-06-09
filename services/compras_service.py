@@ -400,6 +400,40 @@ def get_compras_avulsas_periodo(
     )
 
 
+def get_todas_avulsas_periodo(
+    session: Session, periodo: datetime.date
+) -> list[CompraAvulsa]:
+    """Retorna todas as compras avulsas do período (sem filtro de incluir_na_lista_final).
+
+    Usada na tabela de consolidação para permitir que o gestor decida quais incluir.
+    """
+    return (
+        session.query(CompraAvulsa)
+        .options(joinedload(CompraAvulsa.setor))
+        .filter(CompraAvulsa.periodo_referencia == periodo)
+        .order_by(CompraAvulsa.urgente.desc(), CompraAvulsa.criado_em)
+        .all()
+    )
+
+
+def atualizar_compra_avulsa(
+    session: Session,
+    ca_id: int,
+    quantidade: Optional[int] = None,
+    incluir_na_lista_final: Optional[bool] = None,
+) -> CompraAvulsa:
+    """Atualiza quantidade e/ou flag incluir_na_lista_final de uma compra avulsa."""
+    ca = session.get(CompraAvulsa, ca_id)
+    if ca is None:
+        raise ValueError(f"Compra avulsa {ca_id} não encontrada")
+    if quantidade is not None:
+        ca.quantidade = quantidade
+    if incluir_na_lista_final is not None:
+        ca.incluir_na_lista_final = incluir_na_lista_final
+    session.commit()
+    return ca
+
+
 def classificar_solicitacoes_periodo(
     session: Session, periodo: datetime.date
 ) -> dict[str, int]:
