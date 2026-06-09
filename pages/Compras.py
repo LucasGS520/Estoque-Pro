@@ -37,6 +37,12 @@ from services.compras_service import (
     vincular_item_existente,
 )
 from documents.lista_compras import gerar_lista_compras
+from services.ciclo_service import (
+    abrir_ciclo,
+    encerrar_ciclo,
+    get_ciclo_por_periodo,
+    prorrogar_ciclo,
+)
 from services.estoque_service import atualizar_fornecedores_item, get_all_itens, get_categorias
 from services.fornecedor_service import get_all_fornecedores
 
@@ -475,12 +481,167 @@ if aba == "Painel de Reposição":
 # =============================================================================
 elif aba == "Solicitações e Pendências":
 
-    # ── Link do formulário externo ────────────────────────────────────────────
-    st.info(
-        "**Formulário de Solicitação Externa** — Compartilhe o link abaixo com os setores:\n\n"
-        "`http://localhost:8501/solicitar`",
-        icon="🔗",
+    # ── Envio de Solicitações ─────────────────────────────────────────────────
+    with SessionLocal() as _cs:
+        _ciclo_periodo = get_ciclo_por_periodo(_cs, periodo)
+        if _ciclo_periodo:
+            _ciclo_id      = _ciclo_periodo.id
+            _ciclo_status  = _ciclo_periodo.status
+            _ciclo_prazo   = _ciclo_periodo.prazo_resposta_em
+            _ciclo_abertura  = _ciclo_periodo.abertura_em
+            _ciclo_encerrado = _ciclo_periodo.encerrado_em
+            _participantes = list(_ciclo_periodo.participantes)
+            _total_set   = len(_participantes)
+            _respondidos = sum(1 for p in _participantes if p.status in {"respondido", "sem_solicitacao"})
+            _pendentes   = _total_set - _respondidos
+        else:
+            _ciclo_id = None
+            _ciclo_status = None
+
+    section_title("Envio de Solicitações")
+
+    # Último dia útil do mês selecionado — usado como max_value dos campos de prazo
+    _ultimo_dia_mes = datetime.date(
+        periodo.year, periodo.month, calendar.monthrange(periodo.year, periodo.month)[1]
     )
+
+    if _ciclo_id is None:
+        # Estado A — período atual sem envio: mostrar configuração + botão direto
+        if _periodo_tipo == "atual":
+            with st.container(border=True):
+                st.markdown(f"**{periodo_label}** — Nenhum envio de solicitações realizado.")
+                st.caption(
+                    "Ao enviar, todos os setores ativos poderão preencher o formulário de "
+                    "solicitação de materiais. O prazo pode ser ajustado a qualquer momento."
+                )
+                _prazo_default = min(hoje + datetime.timedelta(days=7), _ultimo_dia_mes)
+                _env_col1, _env_col2 = st.columns([2, 3])
+                with _env_col1:
+                    _prazo_input = st.date_input(
+                        "Prazo de resposta",
+                        value=_prazo_default,
+                        min_value=hoje,
+                        max_value=_ultimo_dia_mes,
+                        format="DD/MM/YYYY",
+                        key="env_prazo_input",
+                    )
+                with _env_col2:
+                    st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
+                    if st.button(
+                        "Enviar Solicitação de Materiais",
+                        type="primary",
+                        key="btn_enviar_solicitacao",
+                        use_container_width=True,
+                    ):
+                        try:
+                            _prazo_dt = datetime.datetime.combine(_prazo_input, datetime.time(23, 59))
+                            with SessionLocal() as _s:
+                                abrir_ciclo(_s, periodo, _prazo_dt)
+                            st.rerun()
+                        except ValueError as _ve:
+                            st.error(str(_ve))
+                    st.markdown("</div>", unsafe_allow_html=True)
+                if _prazo_input.day >= 28:
+                    st.warning(
+                        "⚠️ Prazo próximo ao fim do mês. Quanto mais cedo o envio e mais dias "
+                        "os setores tiverem para responder, melhor."
+                    )
+        else:
+            # Estado B — período passado ou futuro sem envio: nota simples
+            st.caption(f"Nenhum envio de solicitações registrado para **{periodo_label}**.")
+
+    elif _ciclo_status == "aberto":
+        # Estado C — envio realizado, ciclo em aberto
+        _prazo_atual = _ciclo_prazo.date() if _ciclo_prazo else (hoje + datetime.timedelta(days=7))
+        _abertura_txt = _ciclo_abertura.strftime("%d/%m/%Y") if _ciclo_abertura else "—"
+        with st.container(border=True):
+            _sc1, _sc2 = st.columns([3, 2])
+            with _sc1:
+                st.markdown(
+                    f"**{periodo_label}** "
+                    f"<span style='background:#16A34A;color:#fff;font-size:11px;"
+                    f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>ABERTO</span>"
+                    f"&nbsp; Enviado em: **{_abertura_txt}**",
+                    unsafe_allow_html=True,
+                )
+            with _sc2:
+                st.markdown(
+                    f"<div style='text-align:right;font-size:13px;color:#555;margin-top:4px;'>"
+                    f"🏢 {_total_set} setores &nbsp;|&nbsp; "
+                    f"✅ {_respondidos} respondidos &nbsp;|&nbsp; "
+                    f"⏳ {_pendentes} pendentes</div>",
+                    unsafe_allow_html=True,
+                )
+
+            _prazo_atual_display = max(_prazo_atual, hoje)
+
+            _sp1, _sp2, _sp3 = st.columns([2, 1, 2])
+            with _sp1:
+                _novo_prazo = st.date_input(
+                    "Prazo de resposta",
+                    value=min(_prazo_atual_display, _ultimo_dia_mes),
+                    min_value=hoje,
+                    max_value=_ultimo_dia_mes,
+                    format="DD/MM/YYYY",
+                    key="prazo_ciclo_aberto",
+                )
+            with _sp2:
+                st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
+                if st.button("Salvar prazo", key="btn_salvar_prazo"):
+                    _novo_dt = datetime.datetime.combine(_novo_prazo, datetime.time(23, 59))
+                    with SessionLocal() as _s:
+                        prorrogar_ciclo(_s, _ciclo_id, _novo_dt)
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+            with _sp3:
+                st.code("http://localhost:8501/solicitar", language=None)
+
+            if _novo_prazo.day >= 28:
+                st.warning(
+                    "⚠️ Prazo próximo ao fim do mês. Quanto mais cedo o envio, mais dias "
+                    "os setores terão para responder as solicitações."
+                )
+
+            _enc_col1, _enc_col2 = st.columns([4, 1])
+            with _enc_col2:
+                if st.button("Encerrar Coleta", key="btn_encerrar_coleta", type="secondary"):
+                    st.session_state["_confirm_encerrar"] = True
+
+            if st.session_state.get("_confirm_encerrar"):
+                st.warning(f"Encerrar a coleta de **{periodo_label}**? Esta ação não pode ser desfeita.")
+                _ec1, _ec2, _ = st.columns([1, 1, 2])
+                with _ec1:
+                    if st.button("Confirmar", type="primary", key="btn_confirm_enc"):
+                        with SessionLocal() as _s:
+                            encerrar_ciclo(_s, _ciclo_id)
+                        st.session_state.pop("_confirm_encerrar", None)
+                        st.rerun()
+                with _ec2:
+                    if st.button("Cancelar", key="btn_cancel_enc"):
+                        st.session_state.pop("_confirm_encerrar", None)
+                        st.rerun()
+
+    else:
+        # Estado D — ciclo encerrado: somente leitura
+        _enc_txt = _ciclo_encerrado.strftime("%d/%m/%Y") if _ciclo_encerrado else "—"
+        with st.container(border=True):
+            _dc1, _dc2 = st.columns([3, 2])
+            with _dc1:
+                st.markdown(
+                    f"**{periodo_label}** "
+                    f"<span style='background:#6B7280;color:#fff;font-size:11px;"
+                    f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>ENCERRADO</span>"
+                    f"&nbsp; Encerrado em: **{_enc_txt}**",
+                    unsafe_allow_html=True,
+                )
+            with _dc2:
+                st.markdown(
+                    f"<div style='text-align:right;font-size:13px;color:#555;margin-top:4px;'>"
+                    f"🏢 {_total_set} setores &nbsp;|&nbsp; "
+                    f"✅ {_respondidos} respondidos &nbsp;|&nbsp; "
+                    f"⏳ {_pendentes} sem resposta</div>",
+                    unsafe_allow_html=True,
+                )
 
     st.markdown("---")
 
@@ -910,6 +1071,14 @@ elif aba == "Consolidação":
 
             if not _consolidacao_readonly and st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
                 with SessionLocal() as _s:
+                    # IDs que estão visíveis na tabela agora
+                    ids_na_tabela = {int(r["_id"]) for _, r in edited_df.iterrows() if r["_tipo"] == "lista"}
+                    # Itens aprovados anteriormente que sumiram da tabela (qtd_sugerida voltou a 0)
+                    # precisam ser removidos da lista final para manter consistência
+                    for x in get_consolidacao_periodo(_s, periodo):
+                        if x.id not in ids_na_tabela and x.incluir_na_lista_final:
+                            remover_da_lista(_s, x.id)
+                    # Processa o que está visível na tabela
                     for _, row in edited_df.iterrows():
                         item_id   = int(row["_id"])
                         qtd_final = int(row["Qtd Final"]) if pd.notna(row["Qtd Final"]) else 0

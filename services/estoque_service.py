@@ -441,6 +441,7 @@ def criar_setor(
     session: Session,
     nome: str,
     descricao: Optional[str] = None,
+    whatsapp: Optional[str] = None,
 ) -> Setor:
     """Cria um setor validando unicidade do nome (case-insensitive)."""
     nome_norm = _normalizar(nome)
@@ -449,7 +450,7 @@ def criar_setor(
         if _normalizar(s.nome) == nome_norm:
             raise ValueError(f"Já existe um setor com o nome '{nome}'")
 
-    setor = Setor(nome=nome.strip(), descricao=descricao)
+    setor = Setor(nome=nome.strip(), descricao=descricao, whatsapp=whatsapp or None)
     session.add(setor)
     session.commit()
     session.refresh(setor)
@@ -462,8 +463,9 @@ def atualizar_setor(
     nome: str,
     descricao: Optional[str] = None,
     ativo: bool = True,
+    whatsapp: Optional[str] = None,
 ) -> Setor:
-    """Atualiza nome, descrição e status de atividade de um setor existente."""
+    """Atualiza nome, descrição, WhatsApp e status de atividade de um setor existente."""
     setor = session.query(Setor).filter_by(id=setor_id).first()
     if not setor:
         raise ValueError(f"Setor {setor_id} não encontrado")
@@ -477,6 +479,7 @@ def atualizar_setor(
     setor.nome = nome.strip()
     setor.descricao = descricao
     setor.ativo = ativo
+    setor.whatsapp = whatsapp or None
     session.commit()
     session.refresh(setor)
     return setor

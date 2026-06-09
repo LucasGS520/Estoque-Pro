@@ -79,6 +79,16 @@ class SolicitacaoMaterialCreate(BaseModel):
         return v
 
 
+class SolicitacaoPedidoCreate(BaseModel):
+    """Dados para criar um pedido completo em uma única transação."""
+
+    setor_id: Optional[int] = None
+    solicitante: str
+    periodo_referencia: date
+    ciclo_id: Optional[int] = None
+    itens: list[SolicitacaoMaterialCreate]
+
+
 class PrecoCreate(BaseModel):
     """Dados necessários para cadastrar uma cotação de fornecedor."""
 

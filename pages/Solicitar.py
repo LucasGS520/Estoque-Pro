@@ -6,9 +6,10 @@ import datetime
 import streamlit as st
 
 from core.database import get_session_factory
-from core.schemas import SolicitacaoMaterialCreate
+from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from core.ui import _CSS, _LOGO, section_title
-from services.compras_service import criar_solicitacao
+from services.ciclo_service import get_ciclo_por_periodo
+from services.compras_service import criar_pedido_solicitacao
 from services.estoque_service import get_all_itens, get_setores
 
 # CSS global + ocultar sidebar
@@ -49,6 +50,13 @@ def _logo_base64() -> str | None:
         with open(_LOGO, "rb") as f:
             return base64.b64encode(f.read()).decode()
     return None
+
+
+def _limpar_chaves_item(idx: int) -> None:
+    """Remove as chaves de widget dos itens a partir de idx para evitar valores deslocados."""
+    for i in range(idx, len(st.session_state.get("sol_itens", [])) + 1):
+        for prefix in ("qtd_", "obs_", "urg_"):
+            st.session_state.pop(f"{prefix}{i}", None)
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +165,6 @@ with col3:
         f"<br><span style='font-size:11px;color:#737373;'>Definido automaticamente</span>",
         unsafe_allow_html=True,
     )
-    urgente = st.checkbox("🔴 Urgente", key="chk_urgente",
-                          help="Marque se este pedido tem prioridade de atendimento")
 
 st.markdown("---")
 
@@ -238,8 +244,8 @@ if itens_filtrados:
             ja_existe = any(e["item_id"] == item_sel["id"] for e in st.session_state["sol_itens"])
             if ja_existe:
                 st.warning(
-                    f"**{item_sel['nome']}** já está na lista. "
-                    "Remova-o na seção de revisão abaixo para alterar a quantidade."
+                    f"**{item_sel['nome']}** já foi adicionado. "
+                    "Edite a quantidade e observação diretamente na seção de revisão abaixo."
                 )
             else:
                 st.session_state["sol_itens"].append({
@@ -250,22 +256,24 @@ if itens_filtrados:
                     "unidade": item_sel["unidade"],
                     "quantidade": int(qtd_item),
                     "observacao": obs_item.strip() or None,
+                    "urgente": False,
                 })
                 st.rerun()
 else:
     st.info(
         "Nenhum item encontrado com os filtros atuais. "
         "Tente outra categoria ou outro termo de busca. "
-        "Se o material não existe no catálogo, use a seção abaixo."
+        "Se o material não existe no catálogo, use a seção **'Não encontrou o material?'** abaixo."
     )
 
 st.markdown("")
 
 # ---------------------------------------------------------------------------
-# Seção 3 — Item novo (não encontrado no catálogo)
+# Seção 3 — Item novo (não encontrado no catálogo) — sempre visível
 # ---------------------------------------------------------------------------
 
-with st.expander("Solicitar Novo Item"):
+st.markdown("#### Não encontrou o material?")
+with st.container(border=True):
     st.caption(
         "Use esta seção quando o material não existir no catálogo. "
         "O setor de Compras avaliará e cadastrará antes de incluir na lista final."
@@ -299,6 +307,7 @@ with st.expander("Solicitar Novo Item"):
                 "unidade": "—",
                 "quantidade": int(qtd_novo),
                 "observacao": obs_novo.strip() or None,
+                "urgente": False,
             })
             st.rerun()
 
@@ -333,22 +342,46 @@ else:
                         "<span style='background:#3B82F6;color:#fff;font-size:11px;"
                         "font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px;'>Catálogo</span>"
                     )
-                st.markdown(f"**{item['nome']}**{badge}", unsafe_allow_html=True)
+                st.markdown(
+                    f"**{item['nome']}**{badge}"
+                    f"<span style='color:#a0a0a0;font-size:12px;margin-left:8px;'>"
+                    f"{item['categoria']} · {item['unidade']}</span>",
+                    unsafe_allow_html=True,
+                )
 
-                c_cat, c_qtd, c_obs = st.columns([2, 1, 4])
-                c_cat.markdown(
-                    f"<span style='color:#737373;font-size:13px;'>{item['categoria']}</span>",
-                    unsafe_allow_html=True,
-                )
-                c_qtd.markdown(f"**{item['quantidade']}** {item['unidade']}")
-                c_obs.markdown(
-                    f"<span style='color:#737373;font-size:13px;'>{item.get('observacao') or '—'}</span>",
-                    unsafe_allow_html=True,
-                )
+                col_qtd, col_obs, col_urg = st.columns([1, 5, 2])
+                with col_qtd:
+                    st.number_input(
+                        "Quantidade",
+                        min_value=1,
+                        value=item["quantidade"],
+                        step=1,
+                        key=f"qtd_{idx}",
+                    )
+                with col_obs:
+                    st.text_input(
+                        "Observação",
+                        value=item.get("observacao") or "",
+                        placeholder="Justificativa, especificação técnica...",
+                        key=f"obs_{idx}",
+                    )
+                with col_urg:
+                    st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
+                    st.checkbox(
+                        "🔴 Urgente",
+                        value=item.get("urgente", False),
+                        key=f"urg_{idx}",
+                        help="Marque se este item tem prioridade de atendimento",
+                    )
+                    st.markdown("</div>", unsafe_allow_html=True)
+
             with c_rm:
+                st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
                 if st.button("✕", key=f"rm_{idx}", help="Remover item"):
+                    _limpar_chaves_item(idx)
                     st.session_state["sol_itens"].pop(idx)
                     st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("")
 
@@ -365,19 +398,27 @@ else:
     )
 
     if submitted:
+        itens_create = [
+            SolicitacaoMaterialCreate(
+                item_id=item["item_id"],
+                nome_item_livre=item["nome"] if item["item_id"] is None else None,
+                quantidade_solicitada=int(st.session_state.get(f"qtd_{idx}", item["quantidade"])),
+                observacao=st.session_state.get(f"obs_{idx}", item.get("observacao") or "") or None,
+                urgente=st.session_state.get(f"urg_{idx}", item.get("urgente", False)),
+                periodo_referencia=periodo_sel,
+            )
+            for idx, item in enumerate(itens_lista)
+        ]
         with SessionLocal() as _s:
-            for item in itens_lista:
-                dados = SolicitacaoMaterialCreate(
-                    item_id=item["item_id"],
-                    nome_item_livre=item["nome"] if item["item_id"] is None else None,
-                    setor_id=setor_id,
-                    solicitante=solicitante.strip(),
-                    quantidade_solicitada=item["quantidade"],
-                    observacao=item.get("observacao"),
-                    urgente=urgente,
-                    periodo_referencia=periodo_sel,
-                )
-                criar_solicitacao(_s, dados)
+            _ciclo = get_ciclo_por_periodo(_s, periodo_sel)
+            pedido_dados = SolicitacaoPedidoCreate(
+                setor_id=setor_id,
+                solicitante=solicitante.strip(),
+                periodo_referencia=periodo_sel,
+                ciclo_id=_ciclo.id if (_ciclo and _ciclo.status == "aberto") else None,
+                itens=itens_create,
+            )
+            criar_pedido_solicitacao(_s, pedido_dados)
 
         st.session_state["sol_enviada"] = True
         st.rerun()

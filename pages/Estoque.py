@@ -1007,6 +1007,7 @@ elif tab_sel == "Editar":
                     "ID": s.id,
                     "Nome": s.nome,
                     "Descrição": s.descricao or "",
+                    "WhatsApp": s.whatsapp or "",
                     "Ativo": "Sim" if s.ativo else "Não",
                 }
                 for s in setores_all
@@ -1014,7 +1015,7 @@ elif tab_sel == "Editar":
             setor_data = [
                 {
                     "id": s.id, "nome": s.nome, "descricao": s.descricao or "",
-                    "ativo": s.ativo, "mov_count": len(s.movimentacoes),
+                    "whatsapp": s.whatsapp or "", "ativo": s.ativo, "mov_count": len(s.movimentacoes),
                 }
                 for s in setores_all
             ]
@@ -1060,6 +1061,11 @@ elif tab_sel == "Editar":
             with st.container(border=True):
                 ns_nome = st.text_input("Nome do setor", key=f"ns_nome_{_ns_v}")
                 ns_desc = st.text_input("Descrição (opcional)", key=f"ns_desc_{_ns_v}")
+                ns_wpp = st.text_input(
+                    "WhatsApp (opcional)", placeholder="Ex: 5521999998888",
+                    key=f"ns_wpp_{_ns_v}",
+                )
+                st.caption("Número completo com DDI e DDD, apenas dígitos.")
 
                 if st.button("Cadastrar", key="btn_ns_cadastrar", type="primary", use_container_width=True):
                     if not ns_nome.strip():
@@ -1069,7 +1075,8 @@ elif tab_sel == "Editar":
                             with st.spinner("Salvando..."):
                                 with SessionLocal() as session:
                                     setor_criado = estoque_service.criar_setor(
-                                        session, ns_nome, ns_desc or None
+                                        session, ns_nome, ns_desc or None,
+                                        whatsapp=ns_wpp.strip() or None,
                                     )
                                     setor_nome_criado = setor_criado.nome
                             st.session_state["_ns_v"] = _ns_v + 1
@@ -1099,6 +1106,11 @@ elif tab_sel == "Editar":
                     es_desc = st.text_input(
                         "Descrição", value=set_sel["descricao"], key=f"es_{set_sel_id}_desc"
                     )
+                    es_wpp = st.text_input(
+                        "WhatsApp", value=set_sel["whatsapp"], placeholder="Ex: 5521999998888",
+                        key=f"es_{set_sel_id}_wpp",
+                    )
+                    st.caption("Número completo com DDI e DDD, apenas dígitos.")
                     es_ativo = st.checkbox(
                         "Ativo", value=set_sel["ativo"], key=f"es_{set_sel_id}_ativo"
                     )
@@ -1113,7 +1125,8 @@ elif tab_sel == "Editar":
                                 with st.spinner("Salvando..."):
                                     with SessionLocal() as session:
                                         estoque_service.atualizar_setor(
-                                            session, set_sel_id, es_nome, es_desc or None, es_ativo
+                                            session, set_sel_id, es_nome, es_desc or None, es_ativo,
+                                            whatsapp=es_wpp.strip() or None,
                                         )
                                 for k in [k for k in st.session_state if k.startswith(f"es_{set_sel_id}_")]:
                                     st.session_state.pop(k)

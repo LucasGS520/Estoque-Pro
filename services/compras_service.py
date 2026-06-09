@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session, joinedload
 from core.engine import (
     AnalysisResult, AnalysisSummary, ItemRecord, SolicitacaoRecord, StockAnalyzer,
 )
-from core.models import CompraAvulsa, Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial
-from core.schemas import SolicitacaoMaterialCreate
+from core.models import CompraAvulsa, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
+from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from services.fornecedor_service import get_best_price, get_best_prices_bulk
 
 
@@ -152,6 +152,51 @@ def criar_solicitacao(
     return sol
 
 
+def criar_pedido_solicitacao(
+    session: Session, dados: SolicitacaoPedidoCreate
+) -> SolicitacaoPedido:
+    """Cria o cabeçalho do pedido e todos os itens em uma única transação."""
+    pedido = SolicitacaoPedido(
+        setor_id=dados.setor_id,
+        solicitante=dados.solicitante,
+        periodo_referencia=dados.periodo_referencia,
+        ciclo_id=dados.ciclo_id,
+        status="enviado",
+    )
+    session.add(pedido)
+    session.flush()  # gera pedido.id sem commitar
+
+    for item in dados.itens:
+        sol = SolicitacaoMaterial(
+            item_id=item.item_id,
+            nome_item_livre=item.nome_item_livre,
+            setor_id=dados.setor_id,
+            solicitante=dados.solicitante,
+            quantidade_solicitada=item.quantidade_solicitada,
+            observacao=item.observacao,
+            urgente=item.urgente,
+            periodo_referencia=dados.periodo_referencia,
+            status="pendente",
+            pedido_id=pedido.id,
+        )
+        session.add(sol)
+
+    # Marca o setor como respondido no ciclo, dentro da mesma transação
+    if dados.ciclo_id is not None and dados.setor_id is not None:
+        participante = (
+            session.query(CicloSolicitacaoSetor)
+            .filter_by(ciclo_id=dados.ciclo_id, setor_id=dados.setor_id)
+            .first()
+        )
+        if participante:
+            participante.status = "respondido"
+            participante.respondido_em = datetime.datetime.utcnow()
+
+    session.commit()
+    session.refresh(pedido)
+    return pedido
+
+
 def listar_solicitacoes(
     session: Session,
     periodo: datetime.date,
@@ -172,9 +217,10 @@ def listar_solicitacoes(
 
 
 def deletar_solicitacao(session: Session, sol_id: int) -> None:
-    """Remove uma solicitação de compra pelo id."""
+    """Remove uma solicitação de compra e suas compras avulsas associadas."""
     sol = session.get(SolicitacaoMaterial, sol_id)
     if sol:
+        session.query(CompraAvulsa).filter(CompraAvulsa.solicitacao_id == sol_id).delete()
         session.delete(sol)
         session.commit()
 

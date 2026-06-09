@@ -129,10 +129,12 @@ class Setor(Base):
     id = Column(Integer, primary_key=True)
     nome = Column(String(100), nullable=False, unique=True)
     descricao = Column(Text)
+    whatsapp = Column(String(50), nullable=True)
     ativo = Column(Boolean, default=True)
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
 
     movimentacoes = relationship("Movimentacao", back_populates="setor")
+    pedidos = relationship("SolicitacaoPedido", back_populates="setor")
 
 
 class Movimentacao(Base):
@@ -196,6 +198,58 @@ class RevisaoMensal(Base):
     item = relationship("Item", back_populates="revisoes_mensais")
 
 
+class CicloSolicitacaoMaterial(Base):
+    """Registro de um ciclo mensal de coleta de solicitações de materiais."""
+
+    __tablename__ = "ciclos_solicitacao_material"
+
+    id = Column(Integer, primary_key=True)
+    periodo_referencia = Column(Date, nullable=False)
+    abertura_em = Column(DateTime, nullable=False)
+    prazo_resposta_em = Column(DateTime, nullable=True)
+    encerrado_em = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="aberto")  # "aberto" | "encerrado"
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    participantes = relationship("CicloSolicitacaoSetor", back_populates="ciclo")
+    pedidos = relationship("SolicitacaoPedido", back_populates="ciclo")
+
+
+class CicloSolicitacaoSetor(Base):
+    """Rastreia a participação de cada setor dentro de um ciclo de solicitações."""
+
+    __tablename__ = "ciclo_solicitacao_setores"
+
+    id = Column(Integer, primary_key=True)
+    ciclo_id = Column(Integer, ForeignKey("ciclos_solicitacao_material.id"), nullable=False)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=False)
+    status = Column(String(30), nullable=False, default="pendente")  # pendente | respondido | sem_solicitacao
+    respondido_em = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("ciclo_id", "setor_id", name="uq_ciclo_setor"),)
+
+    ciclo = relationship("CicloSolicitacaoMaterial", back_populates="participantes")
+    setor = relationship("Setor")
+
+
+class SolicitacaoPedido(Base):
+    """Cabeçalho atômico de um formulário de solicitação — agrupa todos os itens de uma submissão."""
+
+    __tablename__ = "solicitacoes_pedido"
+
+    id = Column(Integer, primary_key=True)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    solicitante = Column(String(100), nullable=False)
+    periodo_referencia = Column(Date, nullable=False)
+    ciclo_id = Column(Integer, ForeignKey("ciclos_solicitacao_material.id"), nullable=True)
+    status = Column(String(30), nullable=False, default="enviado")
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    setor = relationship("Setor", back_populates="pedidos")
+    itens = relationship("SolicitacaoMaterial", back_populates="pedido")
+    ciclo = relationship("CicloSolicitacaoMaterial", back_populates="pedidos")
+
+
 class SolicitacaoMaterial(Base):
     """Pedido de compra registrado por um setor para um período de referência."""
 
@@ -211,11 +265,13 @@ class SolicitacaoMaterial(Base):
     urgente = Column(Boolean, nullable=False, default=False)
     periodo_referencia = Column(Date, nullable=False)
     status = Column(String(30), nullable=False, default="pendente")
+    pedido_id = Column(Integer, ForeignKey("solicitacoes_pedido.id"), nullable=True)
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
 
     item = relationship("Item", back_populates="solicitacoes")
     setor = relationship("Setor")
-    compras_avulsas = relationship("CompraAvulsa", back_populates="solicitacao")
+    compras_avulsas = relationship("CompraAvulsa", back_populates="solicitacao", cascade="all, delete-orphan")
+    pedido = relationship("SolicitacaoPedido", back_populates="itens")
 
 
 class CompraAvulsa(Base):

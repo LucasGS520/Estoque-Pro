@@ -56,6 +56,10 @@ def run_schema_migrations(engine):
         "ALTER TABLE solicitacoes_material ADD COLUMN urgente BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE itens_lista_compra ADD COLUMN motivo_sugestao TEXT",
         "ALTER TABLE itens_lista_compra RENAME COLUMN motivo TO observacao",
+        # Fase 4: cabeçalho de pedido atômico
+        "ALTER TABLE solicitacoes_material ADD COLUMN pedido_id INTEGER REFERENCES solicitacoes_pedido(id)",
+        # Fase 5: canal de comunicação do setor
+        "ALTER TABLE setores ADD COLUMN whatsapp VARCHAR(50)",
     ]
     with engine.connect() as conn:
         for stmt in new_columns:
