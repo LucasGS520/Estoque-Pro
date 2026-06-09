@@ -39,11 +39,14 @@ from services.compras_service import (
 from documents.lista_compras import gerar_lista_compras
 from services.ciclo_service import (
     abrir_ciclo,
+    adicionar_setor_ao_ciclo,
+    deletar_ciclo,
     encerrar_ciclo,
     get_ciclo_por_periodo,
     prorrogar_ciclo,
+    reabrir_ciclo,
 )
-from services.estoque_service import atualizar_fornecedores_item, get_all_itens, get_categorias
+from services.estoque_service import atualizar_fornecedores_item, get_all_itens, get_categorias, get_setores
 from services.fornecedor_service import get_all_fornecedores
 
 setup_page("Análise de Compras", "🛒")
@@ -594,7 +597,7 @@ elif aba == "Solicitações e Pendências":
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             with _sp3:
-                st.code("http://localhost:8501/solicitar", language=None)
+                st.markdown("<div style='padding-top:4px;font-size:12px;color:#6B7280;'>Formulário por setor disponível via link interno.</div>", unsafe_allow_html=True)
 
             if _novo_prazo.day >= 28:
                 st.warning(
@@ -621,11 +624,60 @@ elif aba == "Solicitações e Pendências":
                         st.session_state.pop("_confirm_encerrar", None)
                         st.rerun()
 
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+            _rm_col, _ = st.columns([2, 3])
+            with _rm_col:
+                if st.button("🗑️ Remover e refazer este ciclo", key="btn_deletar_ciclo_c", use_container_width=True):
+                    st.session_state["_confirm_deletar_ciclo_c"] = True
+                    st.session_state.pop("_confirm_encerrar", None)
+
+            if st.session_state.get("_confirm_deletar_ciclo_c"):
+                st.error(
+                    f"⚠️ **Remover ciclo de {periodo_label}?**  \n"
+                    f"Isso irá excluir permanentemente este ciclo, **{_respondidos} formulário(s)** já recebido(s) "
+                    "e todas as solicitações vinculadas. **Esta ação não pode ser desfeita.**"
+                )
+                _dcc1, _dcc2, _ = st.columns([1, 1, 2])
+                with _dcc1:
+                    if st.button("Confirmar exclusão", type="primary", key="btn_confirm_del_ciclo_c"):
+                        with SessionLocal() as _s:
+                            deletar_ciclo(_s, _ciclo_id)
+                        st.session_state.pop("_confirm_deletar_ciclo_c", None)
+                        st.rerun()
+                with _dcc2:
+                    if st.button("Cancelar", key="btn_cancel_del_ciclo_c"):
+                        st.session_state.pop("_confirm_deletar_ciclo_c", None)
+                        st.rerun()
+
+        # ── Setores não incluídos neste ciclo ────────────────────────────────
+        with SessionLocal() as _snc:
+            _ids_no_ciclo = {p.setor_id for p in _participantes}
+            _todos_ativos_ciclo = get_setores(_snc, apenas_ativos=True)
+            _setores_fora = [s for s in _todos_ativos_ciclo if s.id not in _ids_no_ciclo]
+
+        if _setores_fora:
+            st.markdown("---")
+            section_title("Setores não incluídos neste ciclo")
+            for _sf in _setores_fora:
+                _sf_col1, _sf_col2 = st.columns([3, 2])
+                _sf_col1.markdown(f"🏢 **{_sf.nome}**")
+                if _sf_col2.button(
+                    "Enviar Solicitação de Materiais",
+                    key=f"enviar_setor_{_sf.id}",
+                    use_container_width=True,
+                ):
+                    try:
+                        with SessionLocal() as _s2:
+                            adicionar_setor_ao_ciclo(_s2, _ciclo_id, _sf.id)
+                        st.rerun()
+                    except ValueError as _ve:
+                        st.error(str(_ve))
+
     else:
-        # Estado D — ciclo encerrado: somente leitura
+        # Estado D — ciclo encerrado
         _enc_txt = _ciclo_encerrado.strftime("%d/%m/%Y") if _ciclo_encerrado else "—"
         with st.container(border=True):
-            _dc1, _dc2 = st.columns([3, 2])
+            _dc1, _dc2, _dc3, _dc4 = st.columns([3, 2, 1, 1])
             with _dc1:
                 st.markdown(
                     f"**{periodo_label}** "
@@ -642,6 +694,50 @@ elif aba == "Solicitações e Pendências":
                     f"⏳ {_pendentes} sem resposta</div>",
                     unsafe_allow_html=True,
                 )
+            with _dc3:
+                if _periodo_tipo == "atual":
+                    if st.button("Reabrir Ciclo", key="btn_reabrir_ciclo", use_container_width=True):
+                        st.session_state["_confirm_reabrir"] = True
+                        st.session_state.pop("_confirm_deletar_ciclo", None)
+            with _dc4:
+                if st.button("Remover Ciclo", key="btn_deletar_ciclo_d", use_container_width=True, type="secondary"):
+                    st.session_state["_confirm_deletar_ciclo"] = True
+                    st.session_state.pop("_confirm_reabrir", None)
+
+            if st.session_state.get("_confirm_reabrir"):
+                st.warning(
+                    f"Reabrir a coleta de **{periodo_label}**? "
+                    "Os setores poderão voltar a enviar formulários."
+                )
+                _rc1, _rc2, _ = st.columns([1, 1, 2])
+                with _rc1:
+                    if st.button("Confirmar", type="primary", key="btn_confirm_reabrir"):
+                        with SessionLocal() as _s:
+                            reabrir_ciclo(_s, _ciclo_id)
+                        st.session_state.pop("_confirm_reabrir", None)
+                        st.rerun()
+                with _rc2:
+                    if st.button("Cancelar", key="btn_cancel_reabrir"):
+                        st.session_state.pop("_confirm_reabrir", None)
+                        st.rerun()
+
+            if st.session_state.get("_confirm_deletar_ciclo"):
+                st.error(
+                    f"⚠️ **Remover ciclo de {periodo_label}?**  \n"
+                    f"Isso irá excluir permanentemente este ciclo, **{_respondidos} formulário(s)** recebido(s) "
+                    "e todas as solicitações de materiais vinculadas. **Esta ação não pode ser desfeita.**"
+                )
+                _del1, _del2, _ = st.columns([1, 1, 2])
+                with _del1:
+                    if st.button("Confirmar exclusão", type="primary", key="btn_confirm_del_ciclo_d"):
+                        with SessionLocal() as _s:
+                            deletar_ciclo(_s, _ciclo_id)
+                        st.session_state.pop("_confirm_deletar_ciclo", None)
+                        st.rerun()
+                with _del2:
+                    if st.button("Cancelar", key="btn_cancel_del_ciclo_d"):
+                        st.session_state.pop("_confirm_deletar_ciclo", None)
+                        st.rerun()
 
     st.markdown("---")
 

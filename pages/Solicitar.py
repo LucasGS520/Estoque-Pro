@@ -92,6 +92,20 @@ periodo_sel = datetime.date(_hoje_sol.year, _hoje_sol.month, 1)
 periodo_label_sol = f"{MESES_PT[_hoje_sol.month]}/{_hoje_sol.year}"
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
 
+# Parâmetro de setor pré-definido vindo da URL (?setor=ID)
+_setor_param = st.query_params.get("setor")
+_setor_fixo_id: int | None = None
+_setor_fixo_nome: str | None = None
+if _setor_param:
+    try:
+        _sid = int(_setor_param)
+        _match = next((nome for sid, nome in setores if sid == _sid), None)
+        if _match:
+            _setor_fixo_id = _sid
+            _setor_fixo_nome = _match
+    except (ValueError, TypeError):
+        pass
+
 # ---------------------------------------------------------------------------
 # Cabeçalho — fundo escuro com logo (padrão da sidebar)
 # ---------------------------------------------------------------------------
@@ -145,15 +159,24 @@ st.markdown("### 1. Identificação")
 col1, col2, col3 = st.columns([2, 2, 1])
 
 with col1:
-    setor_opts = {nome: sid for sid, nome in setores}
-    setor_nome = st.selectbox(
-        "Setor *",
-        options=[nome for _, nome in setores],
-        index=None,
-        placeholder="Selecione o setor responsável...",
-        key="sel_setor",
-    )
-    setor_id = setor_opts.get(setor_nome) if setor_nome else None
+    if _setor_fixo_id is not None:
+        st.markdown(
+            f"**Setor**  \n"
+            f"<span style='font-size:15px;font-weight:600;color:#262626;'>{_setor_fixo_nome}</span>"
+            f"<br><span style='font-size:11px;color:#737373;'>Pré-definido pelo envio</span>",
+            unsafe_allow_html=True,
+        )
+        setor_id = _setor_fixo_id
+    else:
+        setor_opts = {nome: sid for sid, nome in setores}
+        setor_nome = st.selectbox(
+            "Setor *",
+            options=[nome for _, nome in setores],
+            index=None,
+            placeholder="Selecione o setor responsável...",
+            key="sel_setor",
+        )
+        setor_id = setor_opts.get(setor_nome) if setor_nome else None
 
 with col2:
     solicitante = st.text_input("Nome do Solicitante *", placeholder="Nome completo", key="inp_solicitante")
@@ -161,8 +184,8 @@ with col2:
 with col3:
     st.markdown(
         f"**Período de referência**  \n"
-        f"<span style='font-size:15px;font-weight:600;color:#262626;'>{periodo_label_sol}</span>"
-        f"<br><span style='font-size:11px;color:#737373;'>Definido automaticamente</span>",
+        f"<span style='font-size:23px;font-weight:600;color:#262626;'>{periodo_label_sol}</span>"
+        f"<br><span style='font-size:11px;color:#737373;'></span>",
         unsafe_allow_html=True,
     )
 

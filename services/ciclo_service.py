@@ -5,7 +5,13 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from core.models import CicloSolicitacaoMaterial, CicloSolicitacaoSetor
+from core.models import (
+    CicloSolicitacaoMaterial,
+    CicloSolicitacaoSetor,
+    CompraAvulsa,
+    SolicitacaoMaterial,
+    SolicitacaoPedido,
+)
 from services.estoque_service import get_setores
 
 
@@ -90,6 +96,98 @@ def get_ciclo_por_periodo(
         .order_by(CicloSolicitacaoMaterial.criado_em.desc())
         .first()
     )
+
+
+def reabrir_ciclo(session: Session, ciclo_id: int) -> CicloSolicitacaoMaterial:
+    """Reabre um ciclo encerrado, voltando o status para 'aberto'."""
+    ciclo = session.query(CicloSolicitacaoMaterial).filter_by(id=ciclo_id).first()
+    if not ciclo:
+        raise ValueError(f"Ciclo {ciclo_id} não encontrado.")
+    if ciclo.status != "encerrado":
+        raise ValueError("Apenas ciclos encerrados podem ser reabertos.")
+    ciclo.status = "aberto"
+    ciclo.encerrado_em = None
+    session.commit()
+    return ciclo
+
+
+def deletar_ciclo(session: Session, ciclo_id: int) -> dict:
+    """Remove o ciclo e todos os dados vinculados a ele (reset completo).
+
+    Exclui: participantes do ciclo, formulários submetidos (pedidos + itens de
+    solicitação + compras avulsas). Retorna contagens do que foi removido.
+    """
+    ciclo = session.query(CicloSolicitacaoMaterial).filter_by(id=ciclo_id).first()
+    if not ciclo:
+        raise ValueError(f"Ciclo {ciclo_id} não encontrado.")
+
+    # IDs dos pedidos vinculados a este ciclo
+    pedido_ids = [
+        r[0]
+        for r in session.query(SolicitacaoPedido.id)
+        .filter(SolicitacaoPedido.ciclo_id == ciclo_id)
+        .all()
+    ]
+
+    n_solicitacoes = 0
+    if pedido_ids:
+        # IDs de solicitações dos pedidos para limpar compras avulsas primeiro
+        sol_ids = [
+            r[0]
+            for r in session.query(SolicitacaoMaterial.id)
+            .filter(SolicitacaoMaterial.pedido_id.in_(pedido_ids))
+            .all()
+        ]
+        if sol_ids:
+            session.query(CompraAvulsa).filter(
+                CompraAvulsa.solicitacao_id.in_(sol_ids)
+            ).delete(synchronize_session=False)
+            n_solicitacoes = (
+                session.query(SolicitacaoMaterial)
+                .filter(SolicitacaoMaterial.pedido_id.in_(pedido_ids))
+                .delete(synchronize_session=False)
+            )
+        session.query(SolicitacaoPedido).filter(
+            SolicitacaoPedido.id.in_(pedido_ids)
+        ).delete(synchronize_session=False)
+
+    session.query(CicloSolicitacaoSetor).filter_by(ciclo_id=ciclo_id).delete()
+    session.delete(ciclo)
+    session.commit()
+
+    return {
+        "formularios": len(pedido_ids),
+        "solicitacoes": n_solicitacoes,
+    }
+
+
+def adicionar_setor_ao_ciclo(
+    session: Session,
+    ciclo_id: int,
+    setor_id: int,
+) -> CicloSolicitacaoSetor:
+    """Adiciona um setor que não estava no ciclo como participante pendente.
+
+    Lança ValueError se o setor já estiver no ciclo ou se o ciclo não estiver aberto.
+    """
+    ciclo = session.query(CicloSolicitacaoMaterial).filter_by(id=ciclo_id).first()
+    if not ciclo or ciclo.status != "aberto":
+        raise ValueError("O ciclo não está aberto.")
+    existente = (
+        session.query(CicloSolicitacaoSetor)
+        .filter_by(ciclo_id=ciclo_id, setor_id=setor_id)
+        .first()
+    )
+    if existente:
+        raise ValueError("Este setor já está incluído no ciclo.")
+    participante = CicloSolicitacaoSetor(
+        ciclo_id=ciclo_id,
+        setor_id=setor_id,
+        status="pendente",
+    )
+    session.add(participante)
+    session.commit()
+    return participante
 
 
 def get_ciclo_ativo(session: Session) -> Optional[CicloSolicitacaoMaterial]:

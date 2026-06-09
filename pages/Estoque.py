@@ -11,7 +11,7 @@ import streamlit as st
 import pandas as pd
 
 from core.database import get_session_factory
-from core.ui import setup_page, page_header, section_title
+from core.ui import formatar_telefone, setup_page, page_header, section_title
 from services import estoque_service, fornecedor_service, calculos_service
 
 
@@ -1007,7 +1007,7 @@ elif tab_sel == "Editar":
                     "ID": s.id,
                     "Nome": s.nome,
                     "Descrição": s.descricao or "",
-                    "WhatsApp": s.whatsapp or "",
+                    "WhatsApp": formatar_telefone(s.whatsapp) if s.whatsapp else "",
                     "Ativo": "Sim" if s.ativo else "Não",
                 }
                 for s in setores_all
@@ -1062,10 +1062,18 @@ elif tab_sel == "Editar":
                 ns_nome = st.text_input("Nome do setor", key=f"ns_nome_{_ns_v}")
                 ns_desc = st.text_input("Descrição (opcional)", key=f"ns_desc_{_ns_v}")
                 ns_wpp = st.text_input(
-                    "WhatsApp (opcional)", placeholder="Ex: 5521999998888",
+                    "WhatsApp (opcional)",
+                    placeholder="(11) 99999-9999",
+                    help="Usado para enviar o formulário de solicitação diretamente ao setor. Informe DDD + número.",
                     key=f"ns_wpp_{_ns_v}",
                 )
-                st.caption("Número completo com DDI e DDD, apenas dígitos.")
+                _ns_wpp_digitos = "".join(c for c in ns_wpp if c.isdigit())
+                if _ns_wpp_digitos:
+                    _ns_norm = "55" + _ns_wpp_digitos if len(_ns_wpp_digitos) in (10, 11) else _ns_wpp_digitos
+                    if len(_ns_norm) in (12, 13) and _ns_norm.startswith("55"):
+                        st.caption(f"✅ Será salvo como: **{formatar_telefone(_ns_norm)}**")
+                    else:
+                        st.caption(f"⚠️ Número incompleto. Informe DDD + número, ex: (11) 99999-9999.")
 
                 if st.button("Cadastrar", key="btn_ns_cadastrar", type="primary", use_container_width=True):
                     if not ns_nome.strip():
@@ -1106,11 +1114,22 @@ elif tab_sel == "Editar":
                     es_desc = st.text_input(
                         "Descrição", value=set_sel["descricao"], key=f"es_{set_sel_id}_desc"
                     )
+                    _es_wpp_salvo = set_sel["whatsapp"]
+                    _es_wpp_display = formatar_telefone(_es_wpp_salvo) if _es_wpp_salvo else ""
                     es_wpp = st.text_input(
-                        "WhatsApp", value=set_sel["whatsapp"], placeholder="Ex: 5521999998888",
+                        "WhatsApp (opcional)",
+                        value=_es_wpp_display,
+                        placeholder="(11) 99999-9999",
+                        help="Usado para enviar o formulário de solicitação diretamente ao setor. Informe DDD + número.",
                         key=f"es_{set_sel_id}_wpp",
                     )
-                    st.caption("Número completo com DDI e DDD, apenas dígitos.")
+                    _es_wpp_digitos = "".join(c for c in es_wpp if c.isdigit())
+                    if _es_wpp_digitos:
+                        _es_norm = "55" + _es_wpp_digitos if len(_es_wpp_digitos) in (10, 11) else _es_wpp_digitos
+                        if len(_es_norm) in (12, 13) and _es_norm.startswith("55"):
+                            st.caption(f"✅ Será salvo como: **{formatar_telefone(_es_norm)}**")
+                        else:
+                            st.caption(f"⚠️ Número incompleto. Informe DDD + número, ex: (11) 99999-9999.")
                     es_ativo = st.checkbox(
                         "Ativo", value=set_sel["ativo"], key=f"es_{set_sel_id}_ativo"
                     )
@@ -1181,7 +1200,8 @@ elif tab_sel == "Editar":
                                     with SessionLocal() as session:
                                         estoque_service.atualizar_setor(
                                             session, set_sel_id, set_sel_nome,
-                                            set_sel.get("descricao") or None, False
+                                            set_sel.get("descricao") or None, False,
+                                            whatsapp=set_sel.get("whatsapp") or None,
                                         )
                                 st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
                                 st.session_state["_fb"] = ("success", f"Setor **{set_sel_nome}** desativado.")
