@@ -14,9 +14,14 @@ import streamlit as st
 from core.database import get_session_factory
 from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
 from services.compras_service import (
+    aplicar_parametros_e_reclassificar,
     aprovar_item,
     aprovar_solicitacao,
+    criar_item_e_vincular,
+    desfazer_compra_avulsa,
+    get_compras_avulsas_periodo,
     rejeitar_solicitacao,
+    registrar_compra_avulsa,
     revertir_solicitacao,
     classificar_solicitacoes_periodo,
     consolidar_periodo,
@@ -27,9 +32,11 @@ from services.compras_service import (
     get_periodos_com_consolidacao,
     listar_solicitacoes,
     remover_da_lista,
+    vincular_item_existente,
 )
 from documents.lista_compras import gerar_lista_compras
-from services.estoque_service import get_categorias
+from services.estoque_service import atualizar_fornecedores_item, get_all_itens, get_categorias
+from services.fornecedor_service import get_all_fornecedores
 
 setup_page("Análise de Compras", "🛒")
 page_header("Análise de Compras", subtitle="Preparação inteligente da lista de compras.")
@@ -77,6 +84,152 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 SessionLocal = get_session_factory()
+
+
+@st.dialog("Resolver: Novo Item", width="large")
+def _modal_novo_item(sol, periodo, exp_key: str) -> None:
+    """Modal overlay para resolver solicitações classificadas como 'novo_item'."""
+    st.caption(
+        f"Solicitante: **{sol.solicitante}** · "
+        f"Quantidade solicitada: **{sol.quantidade_solicitada}**"
+    )
+
+    _aba = st.radio(
+        "aba_novo",
+        ["Criar novo item", "Compra avulsa", "Vincular a existente"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"aba_novo_{sol.id}",
+    )
+
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+    # ── Aba 1: Criar novo item ────────────────────────────────────────────
+    if _aba == "Criar novo item":
+        with SessionLocal() as _ds:
+            _cats     = get_categorias(_ds)
+            _forn_all = get_all_fornecedores(_ds)
+        _cat_map  = {c.nome: c.id for c in _cats}
+        _forn_map = {f.nome: f.id for f in _forn_all}
+
+        _dc1, _dc2 = st.columns(2)
+        _d_nome = _dc1.text_input(
+            "Nome do item",
+            value=sol.nome_item_livre or "",
+            key=f"d_nome_{sol.id}",
+        )
+        _d_cat = _dc2.selectbox(
+            "Categoria",
+            list(_cat_map.keys()),
+            index=None,
+            placeholder="Selecione uma categoria...",
+            key=f"d_cat_{sol.id}",
+        )
+        _dc3, _dc4 = st.columns(2)
+        _d_unid    = _dc3.text_input("Unidade", value="un", key=f"d_unid_{sol.id}")
+        _d_est_ini = _dc4.number_input("Estoque Atual", min_value=0, value=0, step=1, key=f"d_est_{sol.id}")
+
+        with st.expander("Valores manuais de estoque (opcional)", expanded=False):
+            st.caption("Deixe em 0 para usar o cálculo automático após a próxima revisão mensal.")
+            _de1, _de2 = st.columns(2)
+            _d_min   = _de1.number_input("Mínimo manual", min_value=0, value=0, step=1, key=f"d_min_{sol.id}")
+            _d_ideal = _de2.number_input("Ideal manual",  min_value=max(0, _d_min), value=max(0, _d_min) if _d_min > 0 else 0, step=1, key=f"d_ideal_{sol.id}")
+
+        _d_forn  = st.multiselect("Fornecedores", list(_forn_map.keys()), placeholder="Selecione os fornecedores...", key=f"d_forn_{sol.id}")
+        _d_obs   = st.text_area("Observações", key=f"d_obs_{sol.id}")
+        _d_ativo = st.checkbox("Ativo", value=True, key=f"d_ativo_{sol.id}")
+
+        _erros_criar = []
+        if not _d_nome.strip():
+            _erros_criar.append("Informe o nome do item.")
+        if _d_cat is None:
+            _erros_criar.append("Selecione uma categoria.")
+        if _d_ideal > 0 and _d_min == 0:
+            _erros_criar.append("Se ideal > 0, mínimo também deve ser > 0.")
+        if _d_ideal > 0 and _d_ideal < _d_min:
+            _erros_criar.append("Ideal deve ser ≥ mínimo.")
+
+        # Exibe avisos apenas quando o formulário foi parcialmente preenchido
+        _form_tocado = bool(_d_nome.strip()) or _d_cat is not None or _d_min > 0 or _d_ideal > 0
+        if _form_tocado and _erros_criar:
+            st.warning("  \n".join(_erros_criar))
+
+        if st.button("Criar e Vincular", key=f"d_criar_{sol.id}", type="primary", disabled=bool(_erros_criar), use_container_width=True):
+            try:
+                with SessionLocal() as _ds2:
+                    criar_item_e_vincular(
+                        _ds2, sol.id,
+                        categoria_id=_cat_map[_d_cat],
+                        nome=_d_nome.strip(),
+                        unidade=_d_unid,
+                        estoque_atual=_d_est_ini,
+                        minimo=_d_min if _d_min > 0 else None,
+                        ideal=_d_ideal if _d_ideal > 0 else None,
+                        observacoes=_d_obs.strip() or None,
+                        ativo=_d_ativo,
+                        fornecedor_ids=[_forn_map[n] for n in _d_forn] or None,
+                    )
+                st.session_state[exp_key] = True
+                st.rerun()
+            except ValueError as _e:
+                st.error(str(_e))
+
+    # ── Aba 2: Compra avulsa ──────────────────────────────────────────────
+    elif _aba == "Compra avulsa":
+        st.info("Compras de itens que não devem entrar no Controle do Estoque.")
+        _ca1, _ca2 = st.columns(2)
+        _ca_nome = _ca1.text_input("Nome do item", value=sol.nome_item_livre or "", key=f"ca_nome_{sol.id}")
+        _ca_unid = _ca2.text_input("Unidade", value="un", key=f"ca_unid_{sol.id}")
+        _ca3, _ca4 = st.columns(2)
+        _ca_qtd = _ca3.number_input("Quantidade", min_value=1, value=int(sol.quantidade_solicitada), step=1, key=f"ca_qtd_{sol.id}")
+        _ca_urg = _ca4.checkbox("Urgente", value=bool(sol.urgente), key=f"ca_urg_{sol.id}")
+        _ca_obs  = st.text_area("Observação", value=sol.observacao or "", key=f"ca_obs_{sol.id}")
+        _ca_incl = st.checkbox("Incluir na lista final de compras", value=True, key=f"ca_incl_{sol.id}")
+
+        if not _ca_nome.strip():
+            st.warning("Informe o nome do item.")
+        elif st.button("Aprovar como compra avulsa", key=f"ca_aprovar_{sol.id}", type="primary", use_container_width=True):
+            with SessionLocal() as _ds2:
+                registrar_compra_avulsa(
+                    _ds2, sol.id,
+                    nome_item=_ca_nome.strip(),
+                    unidade=_ca_unid,
+                    quantidade=_ca_qtd,
+                    urgente=_ca_urg,
+                    observacao=_ca_obs.strip() or None,
+                    incluir_na_lista_final=_ca_incl,
+                )
+            st.session_state[exp_key] = True
+            st.rerun()
+
+    # ── Aba 3: Vincular a existente ───────────────────────────────────────
+    else:
+        with SessionLocal() as _ds:
+            _todos_cats  = get_categorias(_ds)
+            _todos_itens = get_all_itens(_ds, apenas_ativos=False)
+
+        _vcat_opts = ["Todas as categorias"] + [c.nome for c in _todos_cats]
+        _vcat_sel  = st.selectbox("Filtrar por categoria", _vcat_opts, key=f"v_cat_{sol.id}")
+
+        _itens_filtrados = (
+            _todos_itens if _vcat_sel == "Todas as categorias"
+            else [i for i in _todos_itens if i.categoria.nome == _vcat_sel]
+        )
+
+        if _itens_filtrados:
+            _item_map = {
+                f"{i.nome}  (atual: {i.estoque_atual}  |  mín: {i.estoque_minimo_vigente or 0}  |  ideal: {i.estoque_ideal_vigente or 0})": i.id
+                for i in _itens_filtrados
+            }
+            _v_sel = st.selectbox("Selecione o item", list(_item_map.keys()), key=f"v_item_{sol.id}")
+            if st.button("Vincular", key=f"v_vincular_{sol.id}", type="primary", use_container_width=True):
+                with SessionLocal() as _ds2:
+                    vincular_item_existente(_ds2, sol.id, _item_map[_v_sel])
+                st.session_state[exp_key] = True
+                st.rerun()
+        else:
+            st.info("Nenhum item encontrado para a categoria selecionada.")
+
 
 MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -383,6 +536,7 @@ elif aba == "Solicitações e Pendências":
             "sem_parametros":          ("⚙️ Sem Parâmetros", "#6f42c1"),
             "pendente_cadastro":       ("🆕 Novo Item",      "#fd7e14"),       # legado
             "pendente_parametrizacao": ("⚙️ Sem Parâmetros", "#6f42c1"),      # legado
+            "compra_avulsa_aprovada":  ("🛒 Compra Avulsa",  "#20c997"),
         }
 
         def _badge(status: str) -> str:
@@ -491,18 +645,51 @@ elif aba == "Solicitações e Pendências":
                                 st.rerun()
                         else:
                             if sol.status in {"novo_item", "pendente_cadastro"}:
-                                if c_acao.button("📝", key=f"nav_cad_{sol.id}", help=f'Cadastrar "{sol.nome_item_livre or nome_item}" em Estoque → Editar → Itens', use_container_width=True):
-                                    st.session_state["estoque_tab"] = "Editar"
-                                    st.session_state["estoque_subtab"] = "Itens"
-                                    st.switch_page("pages/Estoque.py")
+                                if c_acao.button("📝", key=f"abrir_novo_{sol.id}", help=f'Resolver: cadastrar ou vincular "{sol.nome_item_livre or nome_item}"', use_container_width=True):
+                                    _modal_novo_item(sol, periodo, _exp_key)
                             elif sol.status in {"sem_parametros", "pendente_parametrizacao"}:
-                                if c_acao.button("⚙️", key=f"nav_param_{sol.id}", help=f'Configurar parâmetros de "{nome_item}" em Estoque → Editar → Itens', use_container_width=True):
-                                    st.session_state["estoque_tab"] = "Editar"
-                                    st.session_state["estoque_subtab"] = "Itens"
-                                    st.switch_page("pages/Estoque.py")
+                                _mk_sp = f"modal_sp_{sol.id}"
+                                if c_acao.button("⚙️", key=f"abrir_sp_{sol.id}", help=f'Definir mínimo/ideal para "{nome_item}"', use_container_width=True):
+                                    st.session_state[_mk_sp] = True
+                                    st.session_state[_exp_key] = True
+                                    st.rerun()
+                            elif sol.status == "compra_avulsa_aprovada":
+                                if c_acao.button("↩", key=f"desfazer_avulsa_{sol.id}", help="Desfazer compra avulsa — voltar como Novo Item", use_container_width=True):
+                                    with SessionLocal() as _s:
+                                        desfazer_compra_avulsa(_s, sol.id)
+                                    st.session_state[_exp_key] = True
+                                    st.rerun()
                             if c_rm.button("🗑️", key=f"del_sol_doc_{sol.id}", help="Remover este item", use_container_width=True):
                                 with SessionLocal() as _s:
                                     deletar_solicitacao(_s, sol.id)
+                                st.session_state[_exp_key] = True
+                                st.rerun()
+
+                    # ── Modal: Definir Parâmetros (Sem Parâmetros) ────────────
+                    if not _sol_readonly and sol.status in {"sem_parametros", "pendente_parametrizacao"} and st.session_state.get(f"modal_sp_{sol.id}"):
+                        with st.container(border=True):
+                            st.markdown(f"**Definir parâmetros para: {nome_item}**")
+                            _sp1, _sp2 = st.columns(2)
+                            _sp_min   = _sp1.number_input("Estoque mínimo", min_value=0, value=0, step=1, key=f"sp_min_{sol.id}")
+                            _sp_ideal = _sp2.number_input("Estoque ideal",  min_value=max(0, _sp_min), value=max(0, _sp_min) if _sp_min > 0 else 0, step=1, key=f"sp_ideal_{sol.id}")
+                            _erros_sp = []
+                            if _sp_ideal > 0 and _sp_min == 0:
+                                _erros_sp.append("Se ideal > 0, mínimo deve ser > 0.")
+                            if _sp_ideal > 0 and _sp_ideal < _sp_min:
+                                _erros_sp.append("Ideal deve ser ≥ mínimo.")
+                            if _erros_sp:
+                                st.warning("  \n".join(_erros_sp))
+                            _col_sp_ok, _col_sp_can, _ = st.columns([1, 1, 4])
+                            _sem_valor = _sp_min == 0 and _sp_ideal == 0
+                            if _col_sp_ok.button("Salvar Parâmetros", key=f"sp_salvar_{sol.id}", type="primary", disabled=bool(_erros_sp) or _sem_valor):
+                                with SessionLocal() as _s2:
+                                    _n = aplicar_parametros_e_reclassificar(_s2, sol.item_id, _sp_min, _sp_ideal, periodo)
+                                st.success(f"Parâmetros salvos e {_n} solicitação(ões) aprovada(s).")
+                                st.session_state.pop(f"modal_sp_{sol.id}", None)
+                                st.session_state[_exp_key] = True
+                                st.rerun()
+                            if _col_sp_can.button("Cancelar", key=f"sp_can_{sol.id}"):
+                                st.session_state.pop(f"modal_sp_{sol.id}", None)
                                 st.session_state[_exp_key] = True
                                 st.rerun()
 
@@ -792,4 +979,27 @@ elif aba == "Consolidação":
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             key="download_lista_final",
         )
+
+    # ── Compras Avulsas do Período ────────────────────────────────────────────
+    with SessionLocal() as _s:
+        avulsas = get_compras_avulsas_periodo(_s, periodo)
+
+    if avulsas:
+        st.divider()
+        section_title("Compras Avulsas")
+        st.caption("Itens aprovados como compra pontual — não entram no cadastro de estoque.")
+
+        rows_avulsas = [
+            {
+                "Item": ca.nome_item,
+                "Unidade": ca.unidade,
+                "Qtd": ca.quantidade,
+                "Setor": ca.setor.nome if ca.setor else "—",
+                "Solicitante": ca.solicitante,
+                "Urgente": "🔴 Sim" if ca.urgente else "Não",
+                "Observação": ca.observacao or "—",
+            }
+            for ca in avulsas
+        ]
+        st.dataframe(pd.DataFrame(rows_avulsas), use_container_width=True, hide_index=True)
 

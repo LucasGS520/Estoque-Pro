@@ -210,10 +210,33 @@ class SolicitacaoMaterial(Base):
     observacao = Column(Text, nullable=True)
     urgente = Column(Boolean, nullable=False, default=False)
     periodo_referencia = Column(Date, nullable=False)
-    status = Column(String(20), nullable=False, default="pendente")
+    status = Column(String(30), nullable=False, default="pendente")
     criado_em = Column(DateTime, default=datetime.datetime.utcnow)
 
     item = relationship("Item", back_populates="solicitacoes")
+    setor = relationship("Setor")
+    compras_avulsas = relationship("CompraAvulsa", back_populates="solicitacao")
+
+
+class CompraAvulsa(Base):
+    """Item de compra pontual que não entra no cadastro principal de estoque."""
+
+    __tablename__ = "compras_avulsas"
+
+    id = Column(Integer, primary_key=True)
+    solicitacao_id = Column(Integer, ForeignKey("solicitacoes_material.id"), nullable=True)
+    periodo_referencia = Column(Date, nullable=False)
+    nome_item = Column(String(200), nullable=False)
+    unidade = Column(String(20), default="un")
+    quantidade = Column(Integer, nullable=False)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    solicitante = Column(String(100), nullable=False)
+    observacao = Column(Text, nullable=True)
+    urgente = Column(Boolean, default=False)
+    incluir_na_lista_final = Column(Boolean, default=True)
+    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    solicitacao = relationship("SolicitacaoMaterial", back_populates="compras_avulsas")
     setor = relationship("Setor")
 
 

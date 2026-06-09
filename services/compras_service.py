@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 from core.engine import (
     AnalysisResult, AnalysisSummary, ItemRecord, SolicitacaoRecord, StockAnalyzer,
 )
-from core.models import Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial
+from core.models import CompraAvulsa, Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial
 from core.schemas import SolicitacaoMaterialCreate
 from services.fornecedor_service import get_best_price, get_best_prices_bulk
 
@@ -230,6 +230,174 @@ def revertir_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
     session.commit()
     session.refresh(sol)
     return sol
+
+
+def vincular_item_existente(
+    session: Session, sol_id: int, item_id: int
+) -> SolicitacaoMaterial:
+    """Vincula uma solicitação 'novo_item' a um item já existente no estoque.
+
+    Reclassifica automaticamente: 'aprovada' se o item tiver mínimo e ideal
+    vigentes > 0, ou 'sem_parametros' caso contrário.
+    """
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    sol.item_id = item_id
+    session.flush()
+    item = session.get(Item, item_id)
+    tem_params = (
+        item is not None
+        and (item.estoque_minimo_vigente or 0) > 0
+        and (item.estoque_ideal_vigente or 0) > 0
+    )
+    sol.status = "aprovada" if tem_params else "sem_parametros"
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
+def criar_item_e_vincular(
+    session: Session,
+    sol_id: int,
+    *,
+    categoria_id: int,
+    nome: str,
+    unidade: str = "un",
+    estoque_atual: int = 0,
+    minimo: Optional[int] = None,
+    ideal: Optional[int] = None,
+    observacoes: Optional[str] = None,
+    ativo: bool = True,
+    fornecedor_ids: Optional[list[int]] = None,
+) -> SolicitacaoMaterial:
+    """Cria um novo item de estoque e vincula à solicitação.
+
+    Se mínimo e ideal forem definidos (> 0), a solicitação é automaticamente
+    aprovada. Caso contrário, fica como 'sem_parametros'.
+    """
+    from services.estoque_service import atualizar_fornecedores_item, create_item  # lazy — evita import circular
+    item = create_item(
+        session, categoria_id, nome, unidade,
+        estoque_atual, minimo, ideal, observacoes, ativo,
+    )
+    if fornecedor_ids:
+        atualizar_fornecedores_item(session, item.id, fornecedor_ids)
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    sol.item_id = item.id
+    tem_params = (minimo or 0) > 0 and (ideal or 0) > 0
+    if tem_params:
+        sol.status = "aprovada"
+    else:
+        sol.status = "sem_parametros"
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
+def registrar_compra_avulsa(
+    session: Session,
+    sol_id: int,
+    nome_item: Optional[str] = None,
+    unidade: str = "un",
+    quantidade: Optional[int] = None,
+    urgente: Optional[bool] = None,
+    observacao: Optional[str] = None,
+    incluir_na_lista_final: bool = True,
+) -> CompraAvulsa:
+    """Resolve uma solicitação 'novo_item' como compra avulsa (sem cadastro no estoque).
+
+    Cria um registro em CompraAvulsa e marca a solicitação como
+    'compra_avulsa_aprovada', removendo-a da fila de pendências.
+    Os parâmetros nome_item, unidade, quantidade e urgente sobrescrevem os dados
+    da solicitação original se fornecidos.
+    """
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    ca = CompraAvulsa(
+        solicitacao_id=sol.id,
+        periodo_referencia=sol.periodo_referencia,
+        nome_item=nome_item if nome_item is not None else (sol.nome_item_livre or ""),
+        unidade=unidade,
+        quantidade=quantidade if quantidade is not None else sol.quantidade_solicitada,
+        setor_id=sol.setor_id,
+        solicitante=sol.solicitante,
+        observacao=observacao if observacao is not None else sol.observacao,
+        urgente=urgente if urgente is not None else sol.urgente,
+        incluir_na_lista_final=incluir_na_lista_final,
+    )
+    session.add(ca)
+    sol.status = "compra_avulsa_aprovada"
+    session.commit()
+    session.refresh(ca)
+    return ca
+
+
+def desfazer_compra_avulsa(session: Session, sol_id: int) -> SolicitacaoMaterial:
+    """Desfaz uma compra avulsa: remove o registro CompraAvulsa e reverte a
+    solicitação para 'novo_item', permitindo nova resolução.
+    """
+    sol = session.get(SolicitacaoMaterial, sol_id)
+    if sol is None:
+        raise ValueError(f"Solicitação {sol_id} não encontrada")
+    if sol.status != "compra_avulsa_aprovada":
+        raise ValueError(
+            f"Só é possível desfazer solicitações com status 'compra_avulsa_aprovada'. "
+            f"Status atual: '{sol.status}'"
+        )
+    session.query(CompraAvulsa).filter(CompraAvulsa.solicitacao_id == sol_id).delete()
+    sol.status = "novo_item"
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
+def aplicar_parametros_e_reclassificar(
+    session: Session,
+    item_id: int,
+    minimo: int,
+    ideal: int,
+    periodo: datetime.date,
+) -> int:
+    """Define mínimo/ideal manual para o item e aprova todas as solicitações
+    'sem_parametros' do mesmo item+período.
+
+    Retorna a quantidade de solicitações aprovadas.
+    """
+    from services.calculos_service import aplicar_minimo_ideal_manual
+    aplicar_minimo_ideal_manual(session, item_id, minimo, ideal)
+    afetadas = (
+        session.query(SolicitacaoMaterial)
+        .filter(
+            SolicitacaoMaterial.item_id == item_id,
+            SolicitacaoMaterial.periodo_referencia == periodo,
+            SolicitacaoMaterial.status == "sem_parametros",
+        )
+        .all()
+    )
+    for sol in afetadas:
+        sol.status = "aprovada"
+    session.commit()
+    return len(afetadas)
+
+
+def get_compras_avulsas_periodo(
+    session: Session, periodo: datetime.date
+) -> list[CompraAvulsa]:
+    """Retorna compras avulsas do período marcadas para incluir na lista final."""
+    return (
+        session.query(CompraAvulsa)
+        .options(joinedload(CompraAvulsa.setor))
+        .filter(
+            CompraAvulsa.periodo_referencia == periodo,
+            CompraAvulsa.incluir_na_lista_final.is_(True),
+        )
+        .order_by(CompraAvulsa.urgente.desc(), CompraAvulsa.criado_em)
+        .all()
+    )
 
 
 def classificar_solicitacoes_periodo(
