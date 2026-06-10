@@ -531,8 +531,8 @@ elif aba == "Solicitações e Pendências":
             # Aviso se as credenciais WhatsApp não estão configuradas
             if not notificacao_service.credenciais_configuradas():
                 st.warning(
-                    "⚠️ **Notificações WhatsApp não configuradas.** "
-                    "Configure `WA_ACCESS_TOKEN` e `WA_PHONE_NUMBER_ID` nas variáveis de ambiente "
+                    "**Notificações WhatsApp não configuradas.** "
+                    "Configure as credenciais necessárias nas variáveis de ambiente "
                     "para habilitar o envio automático dos formulários.",
                     icon="⚠️",
                 )
@@ -1263,6 +1263,10 @@ elif aba == "Solicitações e Pendências":
 # ABA 3 — CONSOLIDAÇÃO
 # =============================================================================
 elif aba == "Consolidação":
+
+    with SessionLocal() as _cs_conso_ciclo:
+        _ciclo_conso = get_ciclo_por_periodo(_cs_conso_ciclo, periodo)
+        _ciclo_id = _ciclo_conso.id if _ciclo_conso else None
 
     if _periodo_tipo == "futuro":
         empty_state(

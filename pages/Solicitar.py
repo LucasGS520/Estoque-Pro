@@ -528,62 +528,63 @@ else:
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("")
 
-    identificacao_ok = bool(setor_id and solicitante.strip())
-    if not identificacao_ok:
-        st.warning("Preencha o **Setor** e o **Nome do Solicitante** na Seção 1 antes de enviar.")
+st.markdown("")
 
-    submitted = st.button(
-        f"Enviar Solicitação ({len(itens_lista)} {'item' if len(itens_lista) == 1 else 'itens'})",
-        disabled=not identificacao_ok,
-        type="primary",
-        use_container_width=True,
-        key="btn_enviar",
+identificacao_ok = bool(setor_id and solicitante.strip())
+if not identificacao_ok:
+    st.warning("Preencha o **Setor** e o **Nome do Solicitante** na Seção 1 antes de enviar.")
+
+submitted = st.button(
+    f"Enviar Solicitação ({len(itens_lista)} {'item' if len(itens_lista) == 1 else 'itens'})",
+    disabled=not identificacao_ok or not itens_lista,
+    type="primary",
+    use_container_width=True,
+    key="btn_enviar",
+)
+
+# Opção "sem necessidade" — disponível sempre que o setor estiver identificado
+if setor_id is not None and _ciclo_check is not None:
+    st.markdown(
+        "<div style='text-align:center;margin-top:8px;"
+        "color:#9e9e9e;font-size:13px;'>ou</div>",
+        unsafe_allow_html=True,
     )
-
-    # Opção "sem necessidade" — disponível sempre que o setor estiver identificado
-    if setor_id is not None and _ciclo_check is not None:
-        st.markdown(
-            "<div style='text-align:center;margin-top:8px;"
-            "color:#9e9e9e;font-size:13px;'>ou</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button(
-            "Não tenho materiais a solicitar este mês",
-            use_container_width=True,
-            key="btn_sem_necessidade",
-            help="Registra que seu setor não tem solicitações para este período.",
-        ):
-            with SessionLocal() as _sn:
-                marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
-            st.session_state["sol_sem_necessidade"] = True
-            st.rerun()
-
-    if submitted:
-        itens_create = [
-            SolicitacaoMaterialCreate(
-                item_id=item["item_id"],
-                nome_item_livre=item["nome"] if item["item_id"] is None else None,
-                solicitante=solicitante.strip(),
-                quantidade_solicitada=int(st.session_state.get(f"qtd_{idx}", item["quantidade"])),
-                observacao=st.session_state.get(f"obs_{idx}", item.get("observacao") or "") or None,
-                urgente=st.session_state.get(f"urg_{idx}", item.get("urgente", False)),
-                periodo_referencia=periodo_sel,
-            )
-            for idx, item in enumerate(itens_lista)
-        ]
-        with SessionLocal() as _s:
-            _ciclo = get_ciclo_por_periodo(_s, periodo_sel)
-            pedido_dados = SolicitacaoPedidoCreate(
-                setor_id=setor_id,
-                solicitante=solicitante.strip(),
-                periodo_referencia=periodo_sel,
-                ciclo_id=_ciclo.id if (_ciclo and _ciclo.status == "aberto") else None,
-                itens=itens_create,
-            )
-            criar_pedido_solicitacao(_s, pedido_dados)
-
-        st.session_state["sol_enviada"] = True
-        st.session_state["sol_confirmar_segundo_envio"] = False
+    if st.button(
+        "Não tenho materiais a solicitar este mês",
+        use_container_width=True,
+        key="btn_sem_necessidade",
+        help="Registra que seu setor não tem solicitações para este período.",
+    ):
+        with SessionLocal() as _sn:
+            marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
+        st.session_state["sol_sem_necessidade"] = True
         st.rerun()
+
+if submitted:
+    itens_create = [
+        SolicitacaoMaterialCreate(
+            item_id=item["item_id"],
+            nome_item_livre=item["nome"] if item["item_id"] is None else None,
+            solicitante=solicitante.strip(),
+            quantidade_solicitada=int(st.session_state.get(f"qtd_{idx}", item["quantidade"])),
+            observacao=st.session_state.get(f"obs_{idx}", item.get("observacao") or "") or None,
+            urgente=st.session_state.get(f"urg_{idx}", item.get("urgente", False)),
+            periodo_referencia=periodo_sel,
+        )
+        for idx, item in enumerate(itens_lista)
+    ]
+    with SessionLocal() as _s:
+        _ciclo = get_ciclo_por_periodo(_s, periodo_sel)
+        pedido_dados = SolicitacaoPedidoCreate(
+            setor_id=setor_id,
+            solicitante=solicitante.strip(),
+            periodo_referencia=periodo_sel,
+            ciclo_id=_ciclo.id if (_ciclo and _ciclo.status == "aberto") else None,
+            itens=itens_create,
+        )
+        criar_pedido_solicitacao(_s, pedido_dados)
+
+    st.session_state["sol_enviada"] = True
+    st.session_state["sol_confirmar_segundo_envio"] = False
+    st.rerun()
