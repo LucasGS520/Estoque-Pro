@@ -8,8 +8,8 @@ import streamlit as st
 from core.database import get_session_factory
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from core.ui import _CSS, _LOGO, section_title
-from services.ciclo_service import get_ciclo_por_periodo
-from services.compras_service import criar_pedido_solicitacao
+from services.ciclo_service import get_ciclo_por_periodo, marcar_setor_respondido
+from services.compras_service import criar_pedido_solicitacao, get_pedidos_setor_periodo
 from services.estoque_service import get_all_itens, get_setores
 
 # CSS global + ocultar sidebar
@@ -67,6 +67,10 @@ if "sol_itens" not in st.session_state:
     st.session_state["sol_itens"] = []
 if "sol_enviada" not in st.session_state:
     st.session_state["sol_enviada"] = False
+if "sol_sem_necessidade" not in st.session_state:
+    st.session_state["sol_sem_necessidade"] = False
+if "sol_confirmar_segundo_envio" not in st.session_state:
+    st.session_state["sol_confirmar_segundo_envio"] = False
 
 # ---------------------------------------------------------------------------
 # Carregar catálogo (extrair para dicts antes de fechar a sessão)
@@ -91,6 +95,23 @@ _hoje_sol = datetime.date.today()
 periodo_sel = datetime.date(_hoje_sol.year, _hoje_sol.month, 1)
 periodo_label_sol = f"{MESES_PT[_hoje_sol.month]}/{_hoje_sol.year}"
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
+
+# ---------------------------------------------------------------------------
+# Verificação do ciclo — bloqueia o formulário se não houver ciclo aberto e válido
+# ---------------------------------------------------------------------------
+
+with SessionLocal() as _sc:
+    _ciclo_check = get_ciclo_por_periodo(_sc, periodo_sel)
+    if _ciclo_check is not None:
+        _ciclo_status = _ciclo_check.status
+        _ciclo_prazo = _ciclo_check.prazo_resposta_em
+    else:
+        _ciclo_status = None
+        _ciclo_prazo = None
+
+_agora = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+_prazo_vencido = _ciclo_prazo is not None and _ciclo_prazo < _agora
+_formulario_bloqueado = _ciclo_status != "aberto" or _prazo_vencido
 
 # Parâmetro de setor pré-definido vindo da URL (?setor=ID)
 _setor_param = st.query_params.get("setor")
@@ -135,6 +156,76 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
+# Gate — bloqueia o formulário se não houver ciclo aberto e válido
+# ---------------------------------------------------------------------------
+
+if _formulario_bloqueado:
+    if _ciclo_status is None:
+        _motivo = "Nenhum ciclo de solicitações foi aberto para este período."
+        _detalhe = f"As coletas de {periodo_label_sol} ainda não foram iniciadas."
+    elif _ciclo_status == "encerrado":
+        _motivo = f"O ciclo de solicitações de {periodo_label_sol} foi encerrado."
+        _detalhe = "O prazo para envio de solicitações deste período já foi concluído."
+    else:
+        _motivo = f"O prazo de resposta do ciclo de {periodo_label_sol} expirou."
+        _detalhe = "As solicitações deste período não estão mais sendo aceitas."
+
+    st.markdown(
+        f"<div style='text-align:center;padding:48px 24px;'>"
+        f"<div style='font-size:48px;margin-bottom:16px;'>🔒</div>"
+        f"<h3 style='color:#262626;margin:0 0 8px;'>Formulário indisponível</h3>"
+        f"<p style='color:#737373;font-size:15px;margin:0 0 4px;'><strong>{_motivo}</strong></p>"
+        f"<p style='color:#9e9e9e;font-size:14px;margin:0;'>{_detalhe}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Gate — segunda submissão (apenas quando setor é identificado via URL)
+# ---------------------------------------------------------------------------
+
+_pedidos_anteriores: list = []
+if _setor_fixo_id is not None and _ciclo_check is not None:
+    with SessionLocal() as _sp:
+        _pedidos_anteriores = get_pedidos_setor_periodo(_sp, _setor_fixo_id, periodo_sel)
+
+_ja_enviou = len(_pedidos_anteriores) > 0
+
+if _ja_enviou and not st.session_state["sol_confirmar_segundo_envio"]:
+    _ped_ant = _pedidos_anteriores[-1]
+    _data_ant = _ped_ant.criado_em.strftime("%d/%m/%Y às %H:%M") if _ped_ant.criado_em else "—"
+    _n_itens_ant = len(_ped_ant.itens) if _ped_ant.itens else 0
+    _envios_txt = f"{len(_pedidos_anteriores)}º envio" if len(_pedidos_anteriores) > 1 else "1 envio"
+
+    st.warning(
+        f"**Você já enviou uma solicitação para {periodo_label_sol}.**  \n"
+        f"Último envio em {_data_ant} — {_n_itens_ant} {'item' if _n_itens_ant == 1 else 'itens'} solicitados ({_envios_txt} no total).  \n"
+        f"Se precisar adicionar mais itens, um novo formulário será registrado separadamente.",
+        icon="⚠️",
+    )
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        if st.button("Enviar mesmo assim", type="primary", use_container_width=True, key="btn_confirmar_segundo"):
+            st.session_state["sol_confirmar_segundo_envio"] = True
+            st.rerun()
+    with _c2:
+        if st.button("Cancelar", use_container_width=True, key="btn_cancelar_segundo"):
+            st.stop()
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Tela de confirmação pós "sem necessidade"
+# ---------------------------------------------------------------------------
+
+if st.session_state["sol_sem_necessidade"]:
+    st.success(
+        f"**Registrado com sucesso.**  \n"
+        f"Seu setor foi marcado sem solicitações para {periodo_label_sol}. Você pode fechar esta página."
+    )
+    st.stop()
+
+# ---------------------------------------------------------------------------
 # Tela de confirmação pós-envio
 # ---------------------------------------------------------------------------
 
@@ -162,8 +253,8 @@ with col1:
     if _setor_fixo_id is not None:
         st.markdown(
             f"**Setor**  \n"
-            f"<span style='font-size:15px;font-weight:600;color:#262626;'>{_setor_fixo_nome}</span>"
-            f"<br><span style='font-size:11px;color:#737373;'>Pré-definido pelo envio</span>",
+            f"<span style='font-size:23px;font-weight:600;color:#262626;'>{_setor_fixo_nome}</span>"
+            f"<br><span style='font-size:11px;color:#737373;'></span>",
             unsafe_allow_html=True,
         )
         setor_id = _setor_fixo_id
@@ -190,6 +281,37 @@ with col3:
     )
 
 st.markdown("---")
+
+# Verificação de segunda submissão para setor selecionado via selectbox (sem URL ?setor=ID).
+# Para URL param, o gate já foi executado antes da Seção 1.
+if (
+    setor_id is not None
+    and _setor_fixo_id is None
+    and _ciclo_check is not None
+    and not st.session_state["sol_confirmar_segundo_envio"]
+):
+    with SessionLocal() as _sp_manual:
+        _pedidos_man = get_pedidos_setor_periodo(_sp_manual, setor_id, periodo_sel)
+    if _pedidos_man:
+        _ped_m = _pedidos_man[-1]
+        _data_m = _ped_m.criado_em.strftime("%d/%m/%Y às %H:%M") if _ped_m.criado_em else "—"
+        _n_m    = len(_ped_m.itens) if _ped_m.itens else 0
+        _envios_m = f"{len(_pedidos_man)}º envio" if len(_pedidos_man) > 1 else "1 envio"
+        st.warning(
+            f"**Você já enviou uma solicitação para {periodo_label_sol}.**  \n"
+            f"Último envio em {_data_m} — {_n_m} {'item' if _n_m == 1 else 'itens'} solicitados ({_envios_m} no total).  \n"
+            f"Se precisar adicionar mais itens, um novo formulário será registrado separadamente.",
+            icon="⚠️",
+        )
+        _cm1, _cm2 = st.columns(2)
+        with _cm1:
+            if st.button("Enviar mesmo assim", type="primary", use_container_width=True, key="btn_confirmar_manual"):
+                st.session_state["sol_confirmar_segundo_envio"] = True
+                st.rerun()
+        with _cm2:
+            if st.button("Cancelar", use_container_width=True, key="btn_cancelar_manual"):
+                st.stop()
+        st.stop()
 
 # ---------------------------------------------------------------------------
 # Seção 2 — Buscar e adicionar itens do catálogo
@@ -420,11 +542,30 @@ else:
         key="btn_enviar",
     )
 
+    # Opção "sem necessidade" — disponível sempre que o setor estiver identificado
+    if setor_id is not None and _ciclo_check is not None:
+        st.markdown(
+            "<div style='text-align:center;margin-top:8px;"
+            "color:#9e9e9e;font-size:13px;'>ou</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Não tenho materiais a solicitar este mês",
+            use_container_width=True,
+            key="btn_sem_necessidade",
+            help="Registra que seu setor não tem solicitações para este período.",
+        ):
+            with SessionLocal() as _sn:
+                marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
+            st.session_state["sol_sem_necessidade"] = True
+            st.rerun()
+
     if submitted:
         itens_create = [
             SolicitacaoMaterialCreate(
                 item_id=item["item_id"],
                 nome_item_livre=item["nome"] if item["item_id"] is None else None,
+                solicitante=solicitante.strip(),
                 quantidade_solicitada=int(st.session_state.get(f"qtd_{idx}", item["quantidade"])),
                 observacao=st.session_state.get(f"obs_{idx}", item.get("observacao") or "") or None,
                 urgente=st.session_state.get(f"urg_{idx}", item.get("urgente", False)),
@@ -444,4 +585,5 @@ else:
             criar_pedido_solicitacao(_s, pedido_dados)
 
         st.session_state["sol_enviada"] = True
+        st.session_state["sol_confirmar_segundo_envio"] = False
         st.rerun()

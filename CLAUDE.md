@@ -11,9 +11,6 @@ pip install -r requirements.txt
 # Executar o app
 streamlit run app.py
 # Disponível em http://localhost:8501
-
-# Executar migração de dados a partir de arquivos Excel (importação única)
-python -m migration.migrate --estoque path/estoque.xlsx --fornecedores path/fornecedores.xlsx
 ```
 
 Nenhuma suíte de testes ou ferramenta de lint está configurada.

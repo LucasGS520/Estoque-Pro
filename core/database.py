@@ -60,6 +60,10 @@ def run_schema_migrations(engine):
         "ALTER TABLE solicitacoes_material ADD COLUMN pedido_id INTEGER REFERENCES solicitacoes_pedido(id)",
         # Fase 5: canal de comunicação do setor
         "ALTER TABLE setores ADD COLUMN whatsapp VARCHAR(50)",
+        # Fase 6: rastreamento de entrega de notificações WhatsApp por setor/ciclo
+        "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN envio_notificado_em DATETIME",
+        "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN falha_envio BOOLEAN DEFAULT 0",
+        "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN motivo_falha VARCHAR(200)",
     ]
     with engine.connect() as conn:
         for stmt in new_columns:

@@ -225,6 +225,15 @@ class CicloSolicitacaoSetor(Base):
     setor_id = Column(Integer, ForeignKey("setores.id"), nullable=False)
     status = Column(String(30), nullable=False, default="pendente")  # pendente | respondido | sem_solicitacao
     respondido_em = Column(DateTime, nullable=True)
+    # Rastreamento de entrega da notificação inicial (abertura do ciclo)
+    envio_notificado_em = Column(DateTime, nullable=True)   # preenchido quando o envio foi bem-sucedido
+    falha_envio         = Column(Boolean, default=False)    # True se o último envio falhou
+    motivo_falha        = Column(String(200), nullable=True) # "sem_whatsapp" | "api_error:400" | etc.
+    # Rastreamento dos demais eventos de notificação (para evitar reenvios duplicados)
+    notificacao_lembrete_d2_em    = Column(DateTime, nullable=True)
+    notificacao_prazo_proximo_em  = Column(DateTime, nullable=True)
+    notificacao_encerramento_em   = Column(DateTime, nullable=True)
+    notificacao_feedback_em       = Column(DateTime, nullable=True)
 
     __table_args__ = (UniqueConstraint("ciclo_id", "setor_id", name="uq_ciclo_setor"),)
 

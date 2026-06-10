@@ -12,7 +12,14 @@ import pandas as pd
 import streamlit as st
 
 from core.database import get_session_factory
-from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
+from core.ui import (
+    empty_state,
+    fmt_brl,
+    gerar_link_formulario_generico,
+    page_header,
+    section_title,
+    setup_page,
+)
 from services.compras_service import (
     aplicar_parametros_e_reclassificar,
     aprovar_item,
@@ -37,14 +44,19 @@ from services.compras_service import (
     vincular_item_existente,
 )
 from documents.lista_compras import gerar_lista_compras
+from services import notificacao_service
 from services.ciclo_service import (
     abrir_ciclo,
     adicionar_setor_ao_ciclo,
     deletar_ciclo,
     encerrar_ciclo,
+    enviar_avisos_prazo_proximo,
+    enviar_feedbacks_aprovacao,
+    enviar_lembretes_pendentes,
     get_ciclo_por_periodo,
     prorrogar_ciclo,
     reabrir_ciclo,
+    reenviar_notificacao_setor,
 )
 from services.estoque_service import atualizar_fornecedores_item, get_all_itens, get_categorias, get_setores
 from services.fornecedor_service import get_all_fornecedores
@@ -324,7 +336,7 @@ _janela_fim    = (
 
 if _periodo_tipo == "futuro":
     st.error(
-        f"🚫 **Período futuro** — não é possível executar análises para **{periodo_label}**. "
+        f"**Período futuro** — não é possível executar análises para **{periodo_label}**. "
         "Selecione o mês atual.",
         icon="🚫",
     )
@@ -488,166 +500,350 @@ elif aba == "Solicitações e Pendências":
     with SessionLocal() as _cs:
         _ciclo_periodo = get_ciclo_por_periodo(_cs, periodo)
         if _ciclo_periodo:
-            _ciclo_id      = _ciclo_periodo.id
-            _ciclo_status  = _ciclo_periodo.status
-            _ciclo_prazo   = _ciclo_periodo.prazo_resposta_em
+            _ciclo_id        = _ciclo_periodo.id
+            _ciclo_status    = _ciclo_periodo.status
+            _ciclo_prazo     = _ciclo_periodo.prazo_resposta_em
             _ciclo_abertura  = _ciclo_periodo.abertura_em
             _ciclo_encerrado = _ciclo_periodo.encerrado_em
-            _participantes = list(_ciclo_periodo.participantes)
-            _total_set   = len(_participantes)
-            _respondidos = sum(1 for p in _participantes if p.status in {"respondido", "sem_solicitacao"})
-            _pendentes   = _total_set - _respondidos
+            _participantes   = list(_ciclo_periodo.participantes)
+            _total_set       = len(_participantes)
+            _respondidos     = sum(1 for p in _participantes if p.status in {"respondido", "sem_solicitacao"})
+            _pendentes       = _total_set - _respondidos
         else:
             _ciclo_id = None
             _ciclo_status = None
 
     section_title("Envio de Solicitações")
 
-    # Último dia útil do mês selecionado — usado como max_value dos campos de prazo
     _ultimo_dia_mes = datetime.date(
         periodo.year, periodo.month, calendar.monthrange(periodo.year, periodo.month)[1]
     )
 
     if _ciclo_id is None:
-        # Estado A — período atual sem envio: mostrar configuração + botão direto
+        # Estado 1 — Preparação
         if _periodo_tipo == "atual":
-            with st.container(border=True):
-                st.markdown(f"**{periodo_label}** — Nenhum envio de solicitações realizado.")
-                st.caption(
-                    "Ao enviar, todos os setores ativos poderão preencher o formulário de "
-                    "solicitação de materiais. O prazo pode ser ajustado a qualquer momento."
+            with SessionLocal() as _cs2:
+                _setores_ativos = get_setores(_cs2, apenas_ativos=True)
+                _setores_ativos_count = len(_setores_ativos)
+                _setores_com_wpp = sum(1 for s in _setores_ativos if s.whatsapp)
+                _setores_sem_wpp = _setores_ativos_count - _setores_com_wpp
+
+            # Aviso se as credenciais WhatsApp não estão configuradas
+            if not notificacao_service.credenciais_configuradas():
+                st.warning(
+                    "⚠️ **Notificações WhatsApp não configuradas.** "
+                    "Configure `WA_ACCESS_TOKEN` e `WA_PHONE_NUMBER_ID` nas variáveis de ambiente "
+                    "para habilitar o envio automático dos formulários.",
+                    icon="⚠️",
                 )
+
+            with st.container(border=True):
+                st.markdown(f"**Envio de Solicitação de Materiais — {periodo_label}**")
+
+                if _setores_ativos_count > 0:
+                    _plural = "es" if _setores_ativos_count != 1 else ""
+                    if _setores_sem_wpp > 0:
+                        st.caption(
+                            f"{_setores_ativos_count} setor{_plural} ativo{_plural}: "
+                            f"**{_setores_com_wpp}** receberão notificação automática · "
+                            f"**{_setores_sem_wpp}** sem WhatsApp cadastrado (link manual disponível)."
+                        )
+                    else:
+                        st.caption(f"{_setores_ativos_count} setor{_plural} ativo{_plural} receberão notificação automática.")
+                else:
+                    st.info("Nenhum setor ativo cadastrado. Cadastre setores antes de enviar.")
+
                 _prazo_default = min(hoje + datetime.timedelta(days=7), _ultimo_dia_mes)
-                _env_col1, _env_col2 = st.columns([2, 3])
-                with _env_col1:
-                    _prazo_input = st.date_input(
-                        "Prazo de resposta",
-                        value=_prazo_default,
-                        min_value=hoje,
-                        max_value=_ultimo_dia_mes,
-                        format="DD/MM/YYYY",
-                        key="env_prazo_input",
-                    )
-                with _env_col2:
-                    st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
-                    if st.button(
-                        "Enviar Solicitação de Materiais",
-                        type="primary",
-                        key="btn_enviar_solicitacao",
-                        use_container_width=True,
-                    ):
-                        try:
-                            _prazo_dt = datetime.datetime.combine(_prazo_input, datetime.time(23, 59))
-                            with SessionLocal() as _s:
-                                abrir_ciclo(_s, periodo, _prazo_dt)
-                            st.rerun()
-                        except ValueError as _ve:
-                            st.error(str(_ve))
-                    st.markdown("</div>", unsafe_allow_html=True)
+                _prazo_input = st.date_input(
+                    "Prazo de resposta",
+                    value=_prazo_default,
+                    min_value=hoje,
+                    max_value=_ultimo_dia_mes,
+                    format="DD/MM/YYYY",
+                    key="env_prazo_input",
+                )
                 if _prazo_input.day >= 28:
                     st.warning(
                         "⚠️ Prazo próximo ao fim do mês. Quanto mais cedo o envio e mais dias "
                         "os setores tiverem para responder, melhor."
                     )
+
+                _, _env_btn_col = st.columns([3, 1])
+                with _env_btn_col:
+                    if st.button(
+                        "Enviar solicitações",
+                        type="primary",
+                        key="btn_enviar_solicitacao",
+                        use_container_width=True,
+                        disabled=(_setores_ativos_count == 0),
+                    ):
+                        try:
+                            _prazo_dt = datetime.datetime.combine(_prazo_input, datetime.time(23, 59))
+                            with SessionLocal() as _s:
+                                _res_abertura = abrir_ciclo(_s, periodo, _prazo_dt)
+                            st.session_state["_ciclo_abertura_result"] = {
+                                "enviados": _res_abertura.enviados,
+                                "falhas_api": _res_abertura.falhas_api,
+                                "sem_whatsapp": _res_abertura.sem_whatsapp,
+                            }
+                            st.rerun()
+                        except ValueError as _ve:
+                            st.error(str(_ve))
         else:
-            # Estado B — período passado ou futuro sem envio: nota simples
             st.caption(f"Nenhum envio de solicitações registrado para **{periodo_label}**.")
 
     elif _ciclo_status == "aberto":
-        # Estado C — envio realizado, ciclo em aberto
-        _prazo_atual = _ciclo_prazo.date() if _ciclo_prazo else (hoje + datetime.timedelta(days=7))
+        # Estado 2 — Coleta aberta
+
+        # Toast com resultado do envio se o ciclo acabou de ser aberto
+        _abertura_result = st.session_state.pop("_ciclo_abertura_result", None)
+        if _abertura_result:
+            _partes = []
+            if _abertura_result["enviados"]:
+                _partes.append(f"✅ {_abertura_result['enviados']} notificado(s)")
+            if _abertura_result["falhas_api"]:
+                _partes.append(f"❌ {_abertura_result['falhas_api']} com falha de API")
+            if _abertura_result["sem_whatsapp"]:
+                _partes.append(f"⚠️ {_abertura_result['sem_whatsapp']} sem WhatsApp")
+            if _partes:
+                st.success(f"Ciclo aberto — {' · '.join(_partes)}")
+            else:
+                st.success("Ciclo aberto com sucesso.")
+
+        _prazo_atual  = _ciclo_prazo.date() if _ciclo_prazo else (hoje + datetime.timedelta(days=7))
         _abertura_txt = _ciclo_abertura.strftime("%d/%m/%Y") if _ciclo_abertura else "—"
-        with st.container(border=True):
-            _sc1, _sc2 = st.columns([3, 2])
-            with _sc1:
-                st.markdown(
-                    f"**{periodo_label}** "
-                    f"<span style='background:#16A34A;color:#fff;font-size:11px;"
-                    f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>ABERTO</span>"
-                    f"&nbsp; Enviado em: **{_abertura_txt}**",
-                    unsafe_allow_html=True,
-                )
-            with _sc2:
-                st.markdown(
-                    f"<div style='text-align:right;font-size:13px;color:#555;margin-top:4px;'>"
-                    f"🏢 {_total_set} setores &nbsp;|&nbsp; "
-                    f"✅ {_respondidos} respondidos &nbsp;|&nbsp; "
-                    f"⏳ {_pendentes} pendentes</div>",
-                    unsafe_allow_html=True,
-                )
+        _prazo_txt    = _prazo_atual.strftime("%d/%m/%Y")
+        _concluido_pct = int(_respondidos / _total_set * 100) if _total_set else 0
 
-            _prazo_atual_display = max(_prazo_atual, hoje)
-
-            _sp1, _sp2, _sp3 = st.columns([2, 1, 2])
-            with _sp1:
-                _novo_prazo = st.date_input(
-                    "Prazo de resposta",
-                    value=min(_prazo_atual_display, _ultimo_dia_mes),
-                    min_value=hoje,
-                    max_value=_ultimo_dia_mes,
-                    format="DD/MM/YYYY",
-                    key="prazo_ciclo_aberto",
-                )
-            with _sp2:
-                st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
-                if st.button("Salvar prazo", key="btn_salvar_prazo"):
-                    _novo_dt = datetime.datetime.combine(_novo_prazo, datetime.time(23, 59))
-                    with SessionLocal() as _s:
-                        prorrogar_ciclo(_s, _ciclo_id, _novo_dt)
+        @st.dialog(f"Encerrar coleta de {periodo_label}?")
+        def _modal_encerrar_coleta():
+            if _pendentes > 0:
+                st.warning(f"{_pendentes} setor{'es' if _pendentes != 1 else ''} ainda não responderam.")
+            _msg_enc = (
+                f"Novas respostas serão bloqueadas. "
+                f"As {_respondidos} resposta{'s' if _respondidos != 1 else ''} recebidas serão preservadas"
+            )
+            if _pendentes > 0:
+                _msg_enc += f" e {_pendentes} setor{'es' if _pendentes != 1 else ''} permanecerão sem resposta"
+            _msg_enc += ". A coleta poderá ser reaberta posteriormente."
+            st.markdown(_msg_enc)
+            _mc1, _mc2 = st.columns(2)
+            with _mc1:
+                if st.button("Cancelar", key="btn_modal_cancel_enc", use_container_width=True):
                     st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-            with _sp3:
-                st.markdown("<div style='padding-top:4px;font-size:12px;color:#6B7280;'>Formulário por setor disponível via link interno.</div>", unsafe_allow_html=True)
+            with _mc2:
+                if st.button("Encerrar coleta", type="primary", key="btn_modal_confirm_enc", use_container_width=True):
+                    with SessionLocal() as _s:
+                        encerrar_ciclo(_s, _ciclo_id)
+                    st.rerun()
 
-            if _novo_prazo.day >= 28:
-                st.warning(
-                    "⚠️ Prazo próximo ao fim do mês. Quanto mais cedo o envio, mais dias "
-                    "os setores terão para responder as solicitações."
-                )
+        @st.dialog(f"Remover ciclo de {periodo_label}?")
+        def _modal_remover_ciclo():
+            st.error(
+                f"Esta ação excluirá permanentemente este ciclo e "
+                f"**{_respondidos} formulário{'s' if _respondidos != 1 else ''}** já recebido{'s' if _respondidos != 1 else ''}. "
+                "Esta ação não pode ser desfeita."
+            )
+            _mr1, _mr2 = st.columns(2)
+            with _mr1:
+                if st.button("Cancelar", key="btn_modal_cancel_rem", use_container_width=True):
+                    st.rerun()
+            with _mr2:
+                if st.button("Remover ciclo", type="primary", key="btn_modal_confirm_rem", use_container_width=True):
+                    with SessionLocal() as _s:
+                        deletar_ciclo(_s, _ciclo_id)
+                    st.rerun()
 
-            _enc_col1, _enc_col2 = st.columns([4, 1])
-            with _enc_col2:
-                if st.button("Encerrar Coleta", key="btn_encerrar_coleta", type="secondary"):
-                    st.session_state["_confirm_encerrar"] = True
+        with st.container(border=True):
+            # Cabeçalho
+            st.markdown(
+                f"**{periodo_label}**&nbsp;"
+                f"<span style='background:#16A34A;color:#fff;font-size:11px;"
+                f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>COLETA ABERTA</span>"
+                f"&nbsp;&nbsp;<span style='font-size:13px;color:#6B7280;'>"
+                f"Enviado em {_abertura_txt} · Prazo em {_prazo_txt}</span>",
+                unsafe_allow_html=True,
+            )
 
-            if st.session_state.get("_confirm_encerrar"):
-                st.warning(f"Encerrar a coleta de **{periodo_label}**? Esta ação não pode ser desfeita.")
-                _ec1, _ec2, _ = st.columns([1, 1, 2])
-                with _ec1:
-                    if st.button("Confirmar", type="primary", key="btn_confirm_enc"):
+            # Indicadores
+            _ind1, _ind2, _ind3, _ind4 = st.columns(4)
+            _ind1.metric("Setores", _total_set)
+            _ind2.metric("Respondidos", _respondidos)
+            _ind3.metric("Pendentes", _pendentes)
+            _ind4.metric("Concluído", f"{_concluido_pct}%")
+            st.progress(_concluido_pct / 100)
+
+            st.markdown("")
+
+            # Prazo — exibição normal ou edição in-place
+            if st.session_state.get("_editando_prazo"):
+                _ep1, _ep2, _ep3 = st.columns([3, 1, 1])
+                with _ep1:
+                    _novo_prazo = st.date_input(
+                        "Prazo de resposta",
+                        value=min(max(_prazo_atual, hoje), _ultimo_dia_mes),
+                        min_value=hoje,
+                        max_value=_ultimo_dia_mes,
+                        format="DD/MM/YYYY",
+                        key="prazo_ciclo_aberto",
+                    )
+                with _ep2:
+                    st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
+                    if st.button("Cancelar", key="btn_cancel_prazo_edit"):
+                        st.session_state.pop("_editando_prazo", None)
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with _ep3:
+                    st.markdown("<div style='padding-top:28px;'>", unsafe_allow_html=True)
+                    if st.button("Atualizar", type="primary", key="btn_salvar_prazo"):
+                        _novo_dt = datetime.datetime.combine(_novo_prazo, datetime.time(23, 59))
                         with SessionLocal() as _s:
-                            encerrar_ciclo(_s, _ciclo_id)
-                        st.session_state.pop("_confirm_encerrar", None)
+                            prorrogar_ciclo(_s, _ciclo_id, _novo_dt)
+                        st.session_state.pop("_editando_prazo", None)
                         st.rerun()
-                with _ec2:
-                    if st.button("Cancelar", key="btn_cancel_enc"):
-                        st.session_state.pop("_confirm_encerrar", None)
+                    st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                _pp1, _pp2 = st.columns([4, 1])
+                with _pp1:
+                    st.markdown(
+                        f"<span style='font-size:12px;color:#6B7280;'>Prazo de resposta</span><br>"
+                        f"<span style='font-size:15px;font-weight:600;'>{_prazo_txt}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with _pp2:
+                    if st.button("Alterar prazo", key="btn_alterar_prazo", use_container_width=True):
+                        st.session_state["_editando_prazo"] = True
                         st.rerun()
 
-            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
-            _rm_col, _ = st.columns([2, 3])
-            with _rm_col:
-                if st.button("🗑️ Remover e refazer este ciclo", key="btn_deletar_ciclo_c", use_container_width=True):
-                    st.session_state["_confirm_deletar_ciclo_c"] = True
-                    st.session_state.pop("_confirm_encerrar", None)
+            st.markdown("")
 
-            if st.session_state.get("_confirm_deletar_ciclo_c"):
-                st.error(
-                    f"⚠️ **Remover ciclo de {periodo_label}?**  \n"
-                    f"Isso irá excluir permanentemente este ciclo, **{_respondidos} formulário(s)** já recebido(s) "
-                    "e todas as solicitações vinculadas. **Esta ação não pode ser desfeita.**"
+            # Barra de ações
+            _, _ac1, _ac2 = st.columns([2, 1, 1])
+            with _ac1:
+                if st.button("Encerrar coleta", key="btn_encerrar_coleta", use_container_width=True):
+                    _modal_encerrar_coleta()
+            with _ac2:
+                if st.button("Remover ciclo", key="btn_remover_ciclo", use_container_width=True, type="secondary"):
+                    _modal_remover_ciclo()
+
+            # ── Banners de notificações automáticas ──────────────────────────
+            if notificacao_service.credenciais_configuradas() and _pendentes > 0:
+                _agora_banner = datetime.datetime.utcnow()
+                _dias_desde_abertura = (_agora_banner - _ciclo_abertura).days if _ciclo_abertura else 0
+
+                # Verifica se algum pendente ainda não recebeu lembrete D+2
+                with SessionLocal() as _nb:
+                    _participantes_sem_lembrete = [
+                        p for p in _participantes
+                        if p.status == "pendente" and p.notificacao_lembrete_d2_em is None
+                    ]
+                    _participantes_sem_prazo = [
+                        p for p in _participantes
+                        if p.status == "pendente" and p.notificacao_prazo_proximo_em is None
+                    ]
+
+                if _dias_desde_abertura >= 2 and _participantes_sem_lembrete:
+                    _nb_col1, _nb_col2 = st.columns([4, 1])
+                    with _nb_col1:
+                        st.warning(
+                            f"⏰ **{len(_participantes_sem_lembrete)} setor(es)** pendente(s) há mais de 2 dias. "
+                            "Envie um lembrete para quem ainda não respondeu.",
+                            icon="⏰",
+                        )
+                    with _nb_col2:
+                        st.markdown("<div style='padding-top:8px;'>", unsafe_allow_html=True)
+                        if st.button("Enviar lembrete", key="btn_lembrete_d2", use_container_width=True):
+                            with SessionLocal() as _sl:
+                                _res_lem = enviar_lembretes_pendentes(_sl, _ciclo_id)
+                            st.success(
+                                f"Lembretes enviados: ✅ {_res_lem['enviados']} · "
+                                f"❌ {_res_lem['falhas_api']} falhas · "
+                                f"⚠️ {_res_lem['sem_whatsapp']} sem WhatsApp"
+                            )
+                            st.rerun()
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                _dias_para_prazo = (_prazo_atual - hoje).days if _prazo_atual else 99
+                if _dias_para_prazo <= 1 and _participantes_sem_prazo:
+                    _vence_hoje = _dias_para_prazo <= 0
+                    _prazo_msg  = "**vence hoje**" if _vence_hoje else "**vence amanhã**"
+                    _nb2_col1, _nb2_col2 = st.columns([4, 1])
+                    with _nb2_col1:
+                        st.error(
+                            f"🚨 Prazo {_prazo_msg}. "
+                            f"{len(_participantes_sem_prazo)} setor(es) ainda não responderam.",
+                            icon="🚨",
+                        )
+                    with _nb2_col2:
+                        st.markdown("<div style='padding-top:8px;'>", unsafe_allow_html=True)
+                        if st.button("Enviar aviso de prazo", key="btn_aviso_prazo", use_container_width=True):
+                            with SessionLocal() as _sp2:
+                                _res_prazo = enviar_avisos_prazo_proximo(_sp2, _ciclo_id)
+                            st.success(
+                                f"Avisos enviados: ✅ {_res_prazo['enviados']} · "
+                                f"❌ {_res_prazo['falhas_api']} falhas · "
+                                f"⚠️ {_res_prazo['sem_whatsapp']} sem WhatsApp"
+                            )
+                            st.rerun()
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+            # ── Status de notificações por setor ─────────────────────────────
+            st.markdown("<hr style='margin:16px 0 12px;opacity:0.15;'>", unsafe_allow_html=True)
+            section_title("Status por Setor")
+
+            _participantes_ord = sorted(_participantes, key=lambda p: p.setor.nome if p.setor else "")
+            _sh1, _sh2, _sh3, _sh4 = st.columns([3, 2, 4, 1])
+            _sh1.caption("Setor")
+            _sh2.caption("Resposta")
+            _sh3.caption("Notificação")
+            _sh4.caption("Ação")
+
+            for _p in _participantes_ord:
+                _pnome = _p.setor.nome if _p.setor else "—"
+
+                # Badge de resposta
+                if _p.status == "respondido":
+                    _resp_txt = "✅ Respondido"
+                elif _p.status == "sem_solicitacao":
+                    _resp_txt = "✓ Sem pedido"
+                else:
+                    _resp_txt = "⏳ Pendente"
+
+                # Badge de notificação
+                if _p.falha_envio and _p.motivo_falha == "sem_whatsapp":
+                    _notif_txt   = "⚠️ Sem WhatsApp cadastrado"
+                    _notif_color = "#D97706"
+                elif _p.falha_envio:
+                    _motivo_curto = (_p.motivo_falha or "erro").replace("api_error:", "")[:40]
+                    _notif_txt   = f"❌ {_motivo_curto}"
+                    _notif_color = "#DC2626"
+                elif _p.envio_notificado_em:
+                    _notif_txt   = f"✅ Enviado em {_p.envio_notificado_em.strftime('%d/%m')}"
+                    _notif_color = "#16A34A"
+                else:
+                    _notif_txt   = "— Não enviado"
+                    _notif_color = "#6B7280"
+
+                _pc1, _pc2, _pc3, _pc4 = st.columns([3, 2, 4, 1])
+                _pc1.markdown(f"🏢 **{_pnome}**")
+                _pc2.markdown(_resp_txt)
+                _pc3.markdown(
+                    f"<span style='color:{_notif_color};font-size:13px;'>{_notif_txt}</span>",
+                    unsafe_allow_html=True,
                 )
-                _dcc1, _dcc2, _ = st.columns([1, 1, 2])
-                with _dcc1:
-                    if st.button("Confirmar exclusão", type="primary", key="btn_confirm_del_ciclo_c"):
-                        with SessionLocal() as _s:
-                            deletar_ciclo(_s, _ciclo_id)
-                        st.session_state.pop("_confirm_deletar_ciclo_c", None)
-                        st.rerun()
-                with _dcc2:
-                    if st.button("Cancelar", key="btn_cancel_del_ciclo_c"):
-                        st.session_state.pop("_confirm_deletar_ciclo_c", None)
-                        st.rerun()
+                with _pc4:
+                    if _p.motivo_falha != "sem_whatsapp":
+                        if st.button("Reenviar", key=f"reenviar_{_p.id}", use_container_width=True):
+                            try:
+                                with SessionLocal() as _rs:
+                                    reenviar_notificacao_setor(_rs, _ciclo_id, _p.setor_id)
+                                st.rerun()
+                            except ValueError as _rve:
+                                st.error(str(_rve))
+
+        # ── Link avulso ───────────────────────────────────────────────────────
+        st.caption("Link avulso (sem setor pré-definido):")
+        st.code(gerar_link_formulario_generico(), language=None)
 
         # ── Setores não incluídos neste ciclo ────────────────────────────────
         with SessionLocal() as _snc:
@@ -659,85 +855,98 @@ elif aba == "Solicitações e Pendências":
             st.markdown("---")
             section_title("Setores não incluídos neste ciclo")
             for _sf in _setores_fora:
-                _sf_col1, _sf_col2 = st.columns([3, 2])
+                _sf_col1, _, _sf_col3 = st.columns([3, 1, 1])
                 _sf_col1.markdown(f"🏢 **{_sf.nome}**")
-                if _sf_col2.button(
-                    "Enviar Solicitação de Materiais",
-                    key=f"enviar_setor_{_sf.id}",
+                if not _sf.whatsapp:
+                    _sf_col1.caption("⚠️ Sem WhatsApp")
+                _sf_btn_key = f"enviar_setor_{_sf.id}"
+                if _sf_col3.button(
+                    "Adicionar ao ciclo",
+                    key=_sf_btn_key,
                     use_container_width=True,
                 ):
                     try:
                         with SessionLocal() as _s2:
-                            adicionar_setor_ao_ciclo(_s2, _ciclo_id, _sf.id)
+                            _p_novo = adicionar_setor_ao_ciclo(_s2, _ciclo_id, _sf.id)
+                        if not _p_novo.falha_envio:
+                            st.success(f"✅ **{_sf.nome}** adicionado e notificado.")
+                        elif _p_novo.motivo_falha == "sem_whatsapp":
+                            st.warning(f"⚠️ **{_sf.nome}** adicionado, mas sem WhatsApp cadastrado.")
+                        else:
+                            st.error(f"**{_sf.nome}** adicionado. Falha no envio: {_p_novo.motivo_falha}")
                         st.rerun()
                     except ValueError as _ve:
                         st.error(str(_ve))
 
     else:
-        # Estado D — ciclo encerrado
+        # Estado 4 — Coleta encerrada
         _enc_txt = _ciclo_encerrado.strftime("%d/%m/%Y") if _ciclo_encerrado else "—"
+        _concluido_pct_enc = int(_respondidos / _total_set * 100) if _total_set else 0
+
+        @st.dialog(f"Reabrir coleta de {periodo_label}?")
+        def _modal_reabrir_coleta():
+            st.markdown(
+                f"Os setores poderão voltar a enviar formulários. "
+                f"As {_respondidos} resposta{'s' if _respondidos != 1 else ''} já recebidas serão preservadas."
+            )
+            _rr1, _rr2 = st.columns(2)
+            with _rr1:
+                if st.button("Cancelar", key="btn_modal_cancel_reabrir", use_container_width=True):
+                    st.rerun()
+            with _rr2:
+                if st.button("Reabrir coleta", type="primary", key="btn_modal_confirm_reabrir", use_container_width=True):
+                    with SessionLocal() as _s:
+                        reabrir_ciclo(_s, _ciclo_id)
+                    st.rerun()
+
+        @st.dialog(f"Remover ciclo de {periodo_label}?")
+        def _modal_remover_ciclo_enc():
+            st.error(
+                f"Esta ação excluirá permanentemente este ciclo e "
+                f"**{_respondidos} formulário{'s' if _respondidos != 1 else ''}** recebido{'s' if _respondidos != 1 else ''}. "
+                "Esta ação não pode ser desfeita."
+            )
+            _mre1, _mre2 = st.columns(2)
+            with _mre1:
+                if st.button("Cancelar", key="btn_modal_cancel_rem_enc", use_container_width=True):
+                    st.rerun()
+            with _mre2:
+                if st.button("Remover ciclo", type="primary", key="btn_modal_confirm_rem_enc", use_container_width=True):
+                    with SessionLocal() as _s:
+                        deletar_ciclo(_s, _ciclo_id)
+                    st.rerun()
+
         with st.container(border=True):
-            _dc1, _dc2, _dc3, _dc4 = st.columns([3, 2, 1, 1])
-            with _dc1:
-                st.markdown(
-                    f"**{periodo_label}** "
-                    f"<span style='background:#6B7280;color:#fff;font-size:11px;"
-                    f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>ENCERRADO</span>"
-                    f"&nbsp; Encerrado em: **{_enc_txt}**",
-                    unsafe_allow_html=True,
-                )
-            with _dc2:
-                st.markdown(
-                    f"<div style='text-align:right;font-size:13px;color:#555;margin-top:4px;'>"
-                    f"🏢 {_total_set} setores &nbsp;|&nbsp; "
-                    f"✅ {_respondidos} respondidos &nbsp;|&nbsp; "
-                    f"⏳ {_pendentes} sem resposta</div>",
-                    unsafe_allow_html=True,
-                )
-            with _dc3:
+            # Cabeçalho
+            st.markdown(
+                f"**{periodo_label}**&nbsp;"
+                f"<span style='background:#6B7280;color:#fff;font-size:11px;"
+                f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>ENCERRADA</span>"
+                f"&nbsp;&nbsp;<span style='font-size:13px;color:#6B7280;'>Encerrada em {_enc_txt}</span>",
+                unsafe_allow_html=True,
+            )
+
+            # Indicadores
+            _ind1, _ind2, _ind3, _ind4 = st.columns(4)
+            _ind1.metric("Setores", _total_set)
+            _ind2.metric("Respondidos", _respondidos)
+            _ind3.metric("Sem resposta", _pendentes)
+            _ind4.metric("Concluído", f"{_concluido_pct_enc}%")
+            st.progress(_concluido_pct_enc / 100)
+
+            st.markdown("")
+            st.caption("Solicitações encerradas. Os dados estão disponíveis para consolidação.")
+            st.markdown("")
+
+            # Barra de ações
+            _, _ac1, _ac2 = st.columns([2, 1, 1])
+            with _ac1:
                 if _periodo_tipo == "atual":
-                    if st.button("Reabrir Ciclo", key="btn_reabrir_ciclo", use_container_width=True):
-                        st.session_state["_confirm_reabrir"] = True
-                        st.session_state.pop("_confirm_deletar_ciclo", None)
-            with _dc4:
-                if st.button("Remover Ciclo", key="btn_deletar_ciclo_d", use_container_width=True, type="secondary"):
-                    st.session_state["_confirm_deletar_ciclo"] = True
-                    st.session_state.pop("_confirm_reabrir", None)
-
-            if st.session_state.get("_confirm_reabrir"):
-                st.warning(
-                    f"Reabrir a coleta de **{periodo_label}**? "
-                    "Os setores poderão voltar a enviar formulários."
-                )
-                _rc1, _rc2, _ = st.columns([1, 1, 2])
-                with _rc1:
-                    if st.button("Confirmar", type="primary", key="btn_confirm_reabrir"):
-                        with SessionLocal() as _s:
-                            reabrir_ciclo(_s, _ciclo_id)
-                        st.session_state.pop("_confirm_reabrir", None)
-                        st.rerun()
-                with _rc2:
-                    if st.button("Cancelar", key="btn_cancel_reabrir"):
-                        st.session_state.pop("_confirm_reabrir", None)
-                        st.rerun()
-
-            if st.session_state.get("_confirm_deletar_ciclo"):
-                st.error(
-                    f"⚠️ **Remover ciclo de {periodo_label}?**  \n"
-                    f"Isso irá excluir permanentemente este ciclo, **{_respondidos} formulário(s)** recebido(s) "
-                    "e todas as solicitações de materiais vinculadas. **Esta ação não pode ser desfeita.**"
-                )
-                _del1, _del2, _ = st.columns([1, 1, 2])
-                with _del1:
-                    if st.button("Confirmar exclusão", type="primary", key="btn_confirm_del_ciclo_d"):
-                        with SessionLocal() as _s:
-                            deletar_ciclo(_s, _ciclo_id)
-                        st.session_state.pop("_confirm_deletar_ciclo", None)
-                        st.rerun()
-                with _del2:
-                    if st.button("Cancelar", key="btn_cancel_del_ciclo_d"):
-                        st.session_state.pop("_confirm_deletar_ciclo", None)
-                        st.rerun()
+                    if st.button("Reabrir coleta", key="btn_reabrir_ciclo", use_container_width=True):
+                        _modal_reabrir_coleta()
+            with _ac2:
+                if st.button("Remover ciclo", key="btn_remover_ciclo_enc", use_container_width=True, type="secondary"):
+                    _modal_remover_ciclo_enc()
 
     st.markdown("---")
 
@@ -745,7 +954,7 @@ elif aba == "Solicitações e Pendências":
     if _sol_readonly:
         _lock_icon = "🚫" if _periodo_tipo == "futuro" else "🔒"
         _lock_msg  = "Período futuro" if _periodo_tipo == "futuro" else "Período encerrado"
-        st.warning(f"{_lock_icon} {_lock_msg} — solicitações em modo somente leitura.", icon=_lock_icon)
+        st.warning(f"{_lock_msg} — solicitações em modo somente leitura.", icon=_lock_icon)
 
     # ── Auto-classificação: só executa no período atual ───────────────────────
     with SessionLocal() as _s:
@@ -760,12 +969,23 @@ elif aba == "Solicitações e Pendências":
     if not todas_sols:
         empty_state("📝", "Nenhuma pendência", f"Nenhuma solicitação ou item sem parâmetros para {periodo_label}.")
     else:
-        # ── Agrupamento por (setor, solicitante) ──────────────────────────────
+        # ── Agrupamento por pedido ────────────────────────────────────────────
         grupos: dict = defaultdict(list)
         for sol in todas_sols:
-            chave = (sol.setor.nome if sol.setor else "—", sol.solicitante)
-            grupos[chave].append(sol)
-        grupos = dict(sorted(grupos.items()))
+            _gk = sol.pedido_id if sol.pedido_id is not None else f"leg_{sol.setor_id}_{sol.solicitante}"
+            grupos[_gk].append(sol)
+
+        # Ordena grupos por data de criação do primeiro item
+        grupos_ordenados = sorted(
+            grupos.items(),
+            key=lambda kv: min(s.criado_em for s in kv[1]),
+        )
+
+        # Conta quantos pedidos cada setor tem (para badge "2º Envio", "3º Envio"...)
+        _setor_pedido_count: dict[str, list] = defaultdict(list)
+        for _gk2, _gs2 in grupos_ordenados:
+            _sn2 = _gs2[0].setor.nome if _gs2[0].setor else "—"
+            _setor_pedido_count[_sn2].append(_gk2)
 
         # ── KPIs ──────────────────────────────────────────────────────────────
         n_formularios = len(grupos)
@@ -834,24 +1054,32 @@ elif aba == "Solicitações e Pendências":
         if todas_sols:
             section_title("Formulários Recebidos")
 
-        for (setor_nome, solicitante), sols in grupos.items():
-            data_doc     = max(s.criado_em for s in sols).strftime("%d/%m/%Y")
-            n_itens      = len(sols)
-            resumo       = _resumo_grupo(sols)
+        for _gkey, sols in grupos_ordenados:
+            setor_nome  = sols[0].setor.nome if sols[0].setor else "—"
+            solicitante = sols[0].solicitante
+            data_doc    = max(s.criado_em for s in sols).strftime("%d/%m/%Y")
+            n_itens     = len(sols)
+            resumo      = _resumo_grupo(sols)
             _PENDENTE_STATUS = {
                 "validada", "novo_item", "sem_parametros", "pendente",
                 "pendente_cadastro", "pendente_parametrizacao",
             }
-            pendentes_grupo  = any(s.status in _PENDENTE_STATUS for s in sols)
-            aprovadas_grupo  = [s for s in sols if s.status == "aprovada"]
-            concluido        = not pendentes_grupo
-            sufixo_label     = "  · ✅ Concluído" if concluido else ""
-            label_exp        = (
+            pendentes_grupo = any(s.status in _PENDENTE_STATUS for s in sols)
+            aprovadas_grupo = [s for s in sols if s.status == "aprovada"]
+            concluido       = not pendentes_grupo
+            sufixo_label    = "  · ✅ Concluído" if concluido else ""
+
+            # Badge de envio múltiplo (aparece só quando o setor enviou mais de uma vez)
+            _pedidos_setor = _setor_pedido_count.get(setor_nome, [])
+            _envio_idx     = _pedidos_setor.index(_gkey) + 1 if _gkey in _pedidos_setor else 1
+            _badge_envio   = f"  ·  {_envio_idx}º Envio" if len(_pedidos_setor) > 1 else ""
+
+            label_exp = (
                 f"🏢  {setor_nome}  ·  {solicitante}  ·  {data_doc}"
-                f"  —  {n_itens} item(ns)  ·  {resumo}{sufixo_label}"
+                f"  —  {n_itens} item(ns)  ·  {resumo}{sufixo_label}{_badge_envio}"
             )
 
-            _exp_key = f"exp_open_{setor_nome}_{solicitante}"
+            _exp_key = f"exp_open_{_gkey}"
             with st.expander(label_exp, expanded=st.session_state.get(_exp_key, False)):
                 # ── Caption de estado ─────────────────────────────────────────
                 if concluido:
@@ -962,7 +1190,7 @@ elif aba == "Solicitações e Pendências":
                 # ── Ações do formulário (apenas no período atual) ─────────────
                 if not _sol_readonly:
                     validadas_grupo  = [s for s in sols if s.status == "validada"]
-                    _confirm_key     = f"confirm_del_{setor_nome}_{solicitante}"
+                    _confirm_key     = f"confirm_del_{_gkey}"
                     _aguard_confirm  = st.session_state.get(_confirm_key, False)
 
                     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
@@ -972,7 +1200,7 @@ elif aba == "Solicitações e Pendências":
                         if validadas_grupo:
                             if st.button(
                                 "Aprovar Pedidos",
-                                key=f"apr_doc_{setor_nome}_{solicitante}",
+                                key=f"apr_doc_{_gkey}",
                                 type="primary",
                                 use_container_width=True,
                                 help="Aprova todos os itens validados deste formulário",
@@ -989,7 +1217,7 @@ elif aba == "Solicitações e Pendências":
                         if not _aguard_confirm:
                             if st.button(
                                 "Excluir Formulário",
-                                key=f"del_doc_{setor_nome}_{solicitante}",
+                                key=f"del_doc_{_gkey}",
                                 use_container_width=True,
                                 help="Remove todos os itens deste formulário permanentemente",
                             ):
@@ -1012,7 +1240,7 @@ elif aba == "Solicitações e Pendências":
                         c_conf, c_canc, _ = st.columns([2, 2, 2])
                         if c_conf.button(
                             "Sim, excluir tudo",
-                            key=f"confirm_yes_{setor_nome}_{solicitante}",
+                            key=f"confirm_yes_{_gkey}",
                             type="primary",
                             use_container_width=True,
                         ):
@@ -1023,7 +1251,7 @@ elif aba == "Solicitações e Pendências":
                             st.rerun()
                         if c_canc.button(
                             "Cancelar",
-                            key=f"confirm_no_{setor_nome}_{solicitante}",
+                            key=f"confirm_no_{_gkey}",
                             use_container_width=True,
                         ):
                             st.session_state[_confirm_key] = False
@@ -1299,5 +1527,45 @@ elif aba == "Consolidação":
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             key="download_lista_final",
         )
+
+        # ── Feedback de aprovação para os setores ─────────────────────────────
+        if notificacao_service.credenciais_configuradas() and _ciclo_id:
+            st.divider()
+            section_title("Feedback aos Setores")
+            st.caption(
+                "Notifica cada setor via WhatsApp com o resumo dos itens aprovados e rejeitados do pedido."
+            )
+
+            # Monta feedbacks por setor a partir das solicitações aprovadas/rejeitadas
+            with SessionLocal() as _sfb:
+                from services.compras_service import listar_solicitacoes as _ls
+                _todas_fb = _ls(_sfb, periodo)
+                _feedbacks: dict[int, dict] = {}
+                for _sol in _todas_fb:
+                    if _sol.setor_id is None or _sol.item_id is None:
+                        continue
+                    nome_item = _sol.item.nome if _sol.item else "—"
+                    _entry = _feedbacks.setdefault(_sol.setor_id, {"aprovados": [], "rejeitados": []})
+                    if _sol.status == "aprovada":
+                        _entry["aprovados"].append(nome_item)
+                    elif _sol.status == "rejeitada":
+                        _entry["rejeitados"].append(nome_item)
+
+            if _feedbacks:
+                if st.button(
+                    "📲 Enviar feedback aos setores",
+                    key="btn_enviar_feedback",
+                    type="primary",
+                    help="Envia WhatsApp para cada setor com resumo dos itens aprovados e rejeitados.",
+                ):
+                    with SessionLocal() as _sfb2:
+                        _res_fb = enviar_feedbacks_aprovacao(_sfb2, _ciclo_id, _feedbacks)
+                    st.success(
+                        f"Feedback enviado: ✅ {_res_fb['enviados']} setor(es) · "
+                        f"❌ {_res_fb['falhas_api']} falhas · "
+                        f"⚠️ {_res_fb['sem_whatsapp']} sem WhatsApp"
+                    )
+            else:
+                st.caption("Nenhuma solicitação aprovada ou rejeitada encontrada para este período.")
 
 

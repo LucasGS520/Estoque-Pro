@@ -747,6 +747,24 @@ def remover_da_lista(session: Session, lista_id: int) -> ItemListaCompra:
     return lista
 
 
+def get_pedidos_setor_periodo(
+    session: Session,
+    setor_id: int,
+    periodo: datetime.date,
+) -> list[SolicitacaoPedido]:
+    """Retorna os pedidos enviados por um setor em um período, do mais recente ao mais antigo."""
+    return (
+        session.query(SolicitacaoPedido)
+        .options(joinedload(SolicitacaoPedido.itens))
+        .filter(
+            SolicitacaoPedido.setor_id == setor_id,
+            SolicitacaoPedido.periodo_referencia == periodo,
+        )
+        .order_by(SolicitacaoPedido.criado_em.asc())
+        .all()
+    )
+
+
 def get_periodos_com_consolidacao(session: Session) -> list[datetime.date]:
     """Retorna os períodos que já possuem consolidação registrada."""
     rows = (

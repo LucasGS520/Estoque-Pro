@@ -464,3 +464,15 @@ def chart_title(title: str) -> None:
         f'<div class="dfeb-chart-card-title">{title}</div>',
         unsafe_allow_html=True,
     )
+
+
+def gerar_link_formulario(setor_id: int) -> str:
+    """Retorna a URL pública do formulário de solicitação pré-definido para um setor."""
+    from core.config import APP_BASE_URL
+    return f"{APP_BASE_URL}/solicitar?setor={setor_id}"
+
+
+def gerar_link_formulario_generico() -> str:
+    """Retorna a URL do formulário sem setor pré-definido (link manual)."""
+    from core.config import APP_BASE_URL
+    return f"{APP_BASE_URL}/solicitar"
