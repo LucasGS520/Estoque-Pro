@@ -6,6 +6,8 @@ operacionais e registra a navegação manual usada pelas páginas.
 
 import datetime
 
+from core import tempo
+
 import streamlit as st
 
 from core.database import init_db, get_session_factory
@@ -26,7 +28,7 @@ EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Auto-trigger: revisão mensal na primeira abertura de cada mês ─────────────
-_hoje = datetime.date.today()
+_hoje = tempo.hoje()
 _revisao_key = f"revisao_executada_{_hoje.year}_{_hoje.month}"
 if not st.session_state.get(_revisao_key):
     from services.calculos_service import executar_revisao_mensal, get_ultima_revisao_global

@@ -7,6 +7,8 @@ registros no banco e registra cada execução na tabela `importacoes`.
 import json
 import datetime
 
+from core import tempo
+
 from sqlalchemy.orm import Session
 
 from core.models import Categoria, Item, Fornecedor, Importacao
@@ -54,7 +56,7 @@ def carregar_itens(
             )
             if existing:
                 existing.estoque_atual = item_data["estoque_atual"]
-                existing.atualizado_em = datetime.datetime.utcnow()
+                existing.atualizado_em = tempo.agora()
             else:
                 novo = Item(
                     categoria_id=cat.id,

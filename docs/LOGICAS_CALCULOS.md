@@ -125,6 +125,11 @@ if item.estoque_minimo_manual is None:
     item.estoque_minimo_vigente = resultado.minimo_sugerido or 0
 ```
 
+> **Nota sobre fuso horário:** a janela de análise e os timestamps das movimentações
+> operam em hora local de Brasília (`core/tempo.py`). Registros gravados em UTC antes
+> de jun/2026 foram convertidos por migração única — sem isso, movimentações próximas
+> da meia-noite caíam no dia/mês errado e distorciam o consumo calculado.
+
 ### Override manual
 
 O usuário pode entrar no cadastro de um item e definir manualmente mínimo e ideal. Quando faz isso:

@@ -6,6 +6,8 @@ funções de consulta apenas leem dados.
 """
 
 import datetime
+
+from core import tempo
 import unicodedata
 from typing import Optional
 
@@ -76,7 +78,7 @@ def update_limites(
         item.unidade = unidade
     if observacoes is not None:
         item.observacoes = observacoes
-    item.atualizado_em = datetime.datetime.utcnow()
+    item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
     return item
@@ -131,7 +133,7 @@ def registrar_movimentacao(
     session.add(mov)
 
     item.estoque_atual = nova_qtd
-    item.atualizado_em = datetime.datetime.utcnow()
+    item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
     return item
@@ -286,7 +288,7 @@ def create_item(
     if duplicado:
         raise ValueError(f"Já existe um item com o nome '{nome}' nessa categoria")
 
-    agora = datetime.datetime.utcnow()
+    agora = tempo.agora()
     tem_manual_min = estoque_minimo_manual is not None and estoque_minimo_manual > 0
     tem_manual_ideal = estoque_ideal_manual is not None and estoque_ideal_manual > 0
 
@@ -357,7 +359,7 @@ def update_item_completo(
     item.unidade = unidade
     item.observacoes = observacoes
     item.ativo = ativo
-    item.atualizado_em = datetime.datetime.utcnow()
+    item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
     return item
@@ -529,7 +531,7 @@ def atualizar_setor(
         )
         for p in participacoes:
             p.status = "sem_solicitacao"
-            p.respondido_em = datetime.datetime.utcnow()
+            p.respondido_em = tempo.agora()
         if participacoes:
             session.commit()
 

@@ -3,6 +3,8 @@
 import base64
 import datetime
 
+from core import tempo
+
 import streamlit as st
 
 from core.database import get_session_factory
@@ -36,7 +38,7 @@ def _periodo_label(d: datetime.date) -> str:
 
 
 def _opcoes_periodo() -> list[datetime.date]:
-    hoje = datetime.date.today()
+    hoje = tempo.hoje()
     proximo_mes = hoje.month % 12 + 1
     proximo_ano = hoje.year if hoje.month < 12 else hoje.year + 1
     return [
@@ -91,7 +93,7 @@ with SessionLocal() as _s:
         for i in _itens_raw
     ]
 
-_hoje_sol = datetime.date.today()
+_hoje_sol = tempo.hoje()
 periodo_sel = datetime.date(_hoje_sol.year, _hoje_sol.month, 1)
 periodo_label_sol = f"{MESES_PT[_hoje_sol.month]}/{_hoje_sol.year}"
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
@@ -109,7 +111,7 @@ with SessionLocal() as _sc:
         _ciclo_status = None
         _ciclo_prazo = None
 
-_agora = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+_agora = tempo.agora()
 _prazo_vencido = _ciclo_prazo is not None and _ciclo_prazo < _agora
 _formulario_bloqueado = _ciclo_status != "aberto" or _prazo_vencido
 
@@ -543,23 +545,31 @@ submitted = st.button(
     key="btn_enviar",
 )
 
-# Opção "sem necessidade" — disponível sempre que o setor estiver identificado
+# Opção "sem necessidade" — disponível apenas enquanto o setor não enviou
+# nenhum pedido no período (não pode sobrescrever o status 'respondido')
 if setor_id is not None and _ciclo_check is not None:
-    st.markdown(
-        "<div style='text-align:center;margin-top:8px;"
-        "color:#9e9e9e;font-size:13px;'>ou</div>",
-        unsafe_allow_html=True,
-    )
-    if st.button(
-        "Não tenho materiais a solicitar este mês",
-        use_container_width=True,
-        key="btn_sem_necessidade",
-        help="Registra que seu setor não tem solicitações para este período.",
-    ):
-        with SessionLocal() as _sn:
-            marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
-        st.session_state["sol_sem_necessidade"] = True
-        st.rerun()
+    with SessionLocal() as _sv:
+        _ja_tem_pedido = len(get_pedidos_setor_periodo(_sv, setor_id, periodo_sel)) > 0
+    if not _ja_tem_pedido:
+        st.markdown(
+            "<div style='text-align:center;margin-top:8px;"
+            "color:#9e9e9e;font-size:13px;'>ou</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Não tenho materiais a solicitar este mês",
+            use_container_width=True,
+            key="btn_sem_necessidade",
+            help="Registra que seu setor não tem solicitações para este período.",
+        ):
+            try:
+                with SessionLocal() as _sn:
+                    marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
+            except ValueError as _exc_sn:
+                st.warning(str(_exc_sn))
+            else:
+                st.session_state["sol_sem_necessidade"] = True
+                st.rerun()
 
 if submitted:
     itens_create = [
@@ -574,17 +584,21 @@ if submitted:
         )
         for idx, item in enumerate(itens_lista)
     ]
-    with SessionLocal() as _s:
-        _ciclo = get_ciclo_por_periodo(_s, periodo_sel)
-        pedido_dados = SolicitacaoPedidoCreate(
-            setor_id=setor_id,
-            solicitante=solicitante.strip(),
-            periodo_referencia=periodo_sel,
-            ciclo_id=_ciclo.id if (_ciclo and _ciclo.status == "aberto") else None,
-            itens=itens_create,
-        )
-        criar_pedido_solicitacao(_s, pedido_dados)
-
-    st.session_state["sol_enviada"] = True
-    st.session_state["sol_confirmar_segundo_envio"] = False
-    st.rerun()
+    # O serviço resolve e valida o ciclo do período (aberto + prazo vigente);
+    # ciclo_id não é mais decidido aqui.
+    pedido_dados = SolicitacaoPedidoCreate(
+        setor_id=setor_id,
+        solicitante=solicitante.strip(),
+        periodo_referencia=periodo_sel,
+        itens=itens_create,
+    )
+    try:
+        with SessionLocal() as _s:
+            criar_pedido_solicitacao(_s, pedido_dados)
+    except ValueError as _exc_envio:
+        # Ciclo encerrado/prazo expirado entre o carregamento da página e o envio
+        st.error(f"Não foi possível enviar a solicitação: {_exc_envio}")
+    else:
+        st.session_state["sol_enviada"] = True
+        st.session_state["sol_confirmar_segundo_envio"] = False
+        st.rerun()

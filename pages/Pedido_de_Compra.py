@@ -7,6 +7,8 @@ para análise na camada de Compras.
 
 import datetime
 
+from core import tempo
+
 import streamlit as st
 
 from core.database import get_session_factory
@@ -36,7 +38,7 @@ with SessionLocal() as _s:
     setores_list = get_setores(_s)
     setor_opts = {s.id: s.nome for s in setores_list}
 
-hoje = datetime.date.today()
+hoje = tempo.hoje()
 anos_disponiveis = list(range(hoje.year - 1, hoje.year + 2))
 
 # ── Formulário ────────────────────────────────────────────────────────────────

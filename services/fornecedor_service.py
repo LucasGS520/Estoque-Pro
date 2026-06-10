@@ -6,6 +6,8 @@ criam, atualizam, excluem ou adicionam preço persistem as alterações com
 """
 
 import datetime
+
+from core import tempo
 from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
@@ -60,7 +62,7 @@ def get_best_price(session: Session, item_id: int) -> Optional[PrecoFornecedor]:
     validade. Se houver fornecedor preferencial válido, ele tem prioridade; em
     seguida vence o menor preço.
     """
-    hoje = datetime.date.today()
+    hoje = tempo.hoje()
     precos = (
         session.query(PrecoFornecedor)
         .options(joinedload(PrecoFornecedor.fornecedor))
@@ -97,7 +99,7 @@ def get_best_prices_bulk(
     if not item_ids:
         return {}
 
-    hoje = datetime.date.today()
+    hoje = tempo.hoje()
     precos = (
         session.query(PrecoFornecedor)
         .options(joinedload(PrecoFornecedor.fornecedor))

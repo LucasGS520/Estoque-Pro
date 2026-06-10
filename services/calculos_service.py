@@ -5,6 +5,8 @@ revisoes_mensais e mantém os campos vigentes sincronizados na tabela itens.
 """
 
 import datetime
+
+from core import tempo
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -54,7 +56,7 @@ def executar_revisao_mensal(
 
     Retorna dict com totais: processados, atualizados, sem_historico.
     """
-    hoje = datetime.date.today()
+    hoje = tempo.hoje()
     data_ref = hoje.replace(day=1)  # 1º do mês corrente
     inicio, fim = calcular_janela(data_ref)
 
@@ -153,7 +155,7 @@ def aplicar_minimo_ideal_manual(
     O sistema continua calculando os sugeridos automáticos na próxima revisão.
     """
     item = session.query(Item).filter(Item.id == item_id).one()
-    agora = datetime.datetime.utcnow()
+    agora = tempo.agora()
 
     item.estoque_minimo_manual = minimo
     item.estoque_ideal_manual = ideal

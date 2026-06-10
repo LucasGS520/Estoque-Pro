@@ -91,15 +91,18 @@ Durante o ciclo aberto, os setores acessam o formulário e têm dois caminhos:
 4. Se o setor enviar um segundo formulário (complemento), um novo `SolicitacaoPedido` é criado — com aviso exibido na tela antes de prosseguir. Ambos aparecem na revisão com badge "1º Envio", "2º Envio", etc.
 
 **Caminho B — Confirmar sem necessidade:**
-1. O formulário exibe o botão "Não tenho materiais a solicitar este mês".
+1. O formulário exibe o botão "Não tenho materiais a solicitar este mês" — apenas enquanto o setor ainda não enviou nenhum pedido no período.
 2. Ao confirmar, nenhum `SolicitacaoPedido` é criado.
 3. O status do `CicloSolicitacaoSetor` passa para `sem_solicitacao`.
 4. O setor sai da fila de pendentes e não recebe mais lembretes.
+5. Se o setor já enviou pedidos no ciclo, a marcação é rejeitada pelo serviço (`marcar_setor_respondido` lança `ValueError`) — o status `respondido` nunca é sobrescrito. A direção inversa continua válida: enviar um pedido após marcar "sem necessidade" atualiza o setor para `respondido`.
 
 **Formulário bloqueado quando:**
 - Não há ciclo aberto para o período.
 - O ciclo está encerrado.
-- O prazo de resposta já passou.
+- O prazo de resposta já passou (prazo em hora local de Brasília — ver `core/tempo.py`).
+
+Essas regras são validadas em **duas camadas**: na UI (gate que bloqueia a página) e na camada de serviço — `criar_pedido_solicitacao` rejeita submissões sem ciclo aberto ou com prazo vencido (cobre formulários carregados antes do encerramento) e define o `ciclo_id` do pedido a partir do ciclo vigente do período.
 
 ---
 

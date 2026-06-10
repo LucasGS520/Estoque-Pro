@@ -6,6 +6,8 @@ classificar → consolidar → revisar painel → lista final.
 
 import calendar
 import datetime
+
+from core import tempo
 from collections import defaultdict
 
 import pandas as pd
@@ -275,7 +277,7 @@ _STATUS_LABEL = {
 # ── Seletor de período ────────────────────────────────────────────────────────
 section_title("Período de Referência")
 
-hoje = datetime.date.today()
+hoje = tempo.hoje()
 anos_disponiveis = list(range(hoje.year - 2, hoje.year + 2))
 
 col_mes, col_ano, col_btn = st.columns([2, 1, 2])
@@ -358,7 +360,7 @@ elif periodo in periodos_existentes:
     st.info(
         f"**Análise Mensal — {periodo_label}**  \n"
         f"📅 Janela: {_janela_inicio} – {_janela_fim} · Última análise: {_data_str}  \n"
-        f"🔢 {_n_total} item(ns) analisado(s) · {_n_comprar} a comprar{_avulsas_str}{_sem_min_str} · {_n_lista_final} aprovado(s) na lista final{_lock_str}",
+        f"🔢 {_n_total} item(ns) analisado(s) · ✅ {_n_lista_final} aprovado(s) na lista final{_lock_str}",
         icon=_banner_icon,
     )
 else:
@@ -728,7 +730,7 @@ elif aba == "Solicitações e Pendências":
 
             # ── Banners de notificações automáticas ──────────────────────────
             if notificacao_service.credenciais_configuradas() and _pendentes > 0:
-                _agora_banner = datetime.datetime.utcnow()
+                _agora_banner = tempo.agora()
                 _dias_desde_abertura = (_agora_banner - _ciclo_abertura).days if _ciclo_abertura else 0
 
                 # Verifica se algum pendente ainda não recebeu lembrete D+2

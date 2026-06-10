@@ -6,6 +6,8 @@ de lista de compras e orçamento.
 """
 
 import datetime
+
+from core import tempo
 from pathlib import Path
 from typing import Sequence
 
@@ -41,7 +43,7 @@ def criar_documento(titulo: str) -> Document:
 
     # Data
     data_p = doc.add_paragraph(
-        f"Gerado em: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        f"Gerado em: {tempo.agora().strftime('%d/%m/%Y %H:%M')}"
     )
     data_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     data_p.runs[0].font.size = Pt(9)
@@ -106,7 +108,7 @@ def _set_cell_bg(cell, hex_color: str) -> None:
 def salvar_com_timestamp(doc: Document, prefixo: str) -> Path:
     """Salva o documento em `EXPORTS_DIR` com timestamp no nome do arquivo."""
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    nome = f"{prefixo}_{datetime.datetime.now().strftime('%Y_%m_%d_%H%M')}.docx"
+    nome = f"{prefixo}_{tempo.agora().strftime('%Y_%m_%d_%H%M')}.docx"
     path = EXPORTS_DIR / nome
     doc.save(str(path))
     return path

@@ -6,6 +6,8 @@ permite cadastrar novas cotações de preço para melhorar as estimativas.
 
 import datetime
 
+from core import tempo
+
 import streamlit as st
 import pandas as pd
 
@@ -181,7 +183,7 @@ elif tab_sel == "Cadastrar Cotação":
         with col1:
             preco_cot = st.number_input("Preço Unitário (R$)", min_value=0.01, format="%.2f")
         with col2:
-            data_cot = st.date_input("Data da Cotação", value=datetime.date.today())
+            data_cot = st.date_input("Data da Cotação", value=tempo.hoje())
         with col3:
             validade_cot = st.number_input("Validade (dias)", min_value=1, value=30)
         submit_cot = st.form_submit_button("Salvar Cotação", type="primary", use_container_width=True)

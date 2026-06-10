@@ -7,6 +7,8 @@ persistem o resultado em `snapshots_analise` (legado) e `itens_lista_compra`.
 """
 
 import datetime
+
+from core import tempo
 from typing import Optional
 
 from sqlalchemy import and_
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 from core.engine import (
     AnalysisResult, AnalysisSummary, ItemRecord, SolicitacaoRecord, StockAnalyzer,
 )
-from core.models import CompraAvulsa, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
+from core.models import CompraAvulsa, CicloSolicitacaoMaterial, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from services.fornecedor_service import get_best_price, get_best_prices_bulk
 
@@ -155,12 +157,40 @@ def criar_solicitacao(
 def criar_pedido_solicitacao(
     session: Session, dados: SolicitacaoPedidoCreate
 ) -> SolicitacaoPedido:
-    """Cria o cabeçalho do pedido e todos os itens em uma única transação."""
+    """Cria o cabeçalho do pedido e todos os itens em uma única transação.
+
+    Exige um ciclo de solicitações aberto e dentro do prazo para o período —
+    mesma regra do formulário (Solicitar), agora garantida na camada de
+    serviço. O ciclo_id do pedido vem do ciclo encontrado, não do chamador.
+    Levanta ValueError quando não há ciclo, o ciclo está encerrado ou o
+    prazo de resposta expirou.
+    """
+    ciclo = (
+        session.query(CicloSolicitacaoMaterial)
+        .filter(CicloSolicitacaoMaterial.periodo_referencia == dados.periodo_referencia)
+        .order_by(CicloSolicitacaoMaterial.criado_em.desc())
+        .first()
+    )
+    if ciclo is None:
+        raise ValueError(
+            "Nenhum ciclo de solicitações foi aberto para este período."
+        )
+    if ciclo.status != "aberto":
+        raise ValueError(
+            "O ciclo de solicitações deste período já foi encerrado. "
+            "Procure o setor de Compras."
+        )
+    if ciclo.prazo_resposta_em is not None and ciclo.prazo_resposta_em < tempo.agora():
+        raise ValueError(
+            "O prazo de resposta do ciclo deste período expirou. "
+            "Procure o setor de Compras."
+        )
+
     pedido = SolicitacaoPedido(
         setor_id=dados.setor_id,
         solicitante=dados.solicitante,
         periodo_referencia=dados.periodo_referencia,
-        ciclo_id=dados.ciclo_id,
+        ciclo_id=ciclo.id,
         status="enviado",
     )
     session.add(pedido)
@@ -182,15 +212,15 @@ def criar_pedido_solicitacao(
         session.add(sol)
 
     # Marca o setor como respondido no ciclo, dentro da mesma transação
-    if dados.ciclo_id is not None and dados.setor_id is not None:
+    if dados.setor_id is not None:
         participante = (
             session.query(CicloSolicitacaoSetor)
-            .filter_by(ciclo_id=dados.ciclo_id, setor_id=dados.setor_id)
+            .filter_by(ciclo_id=ciclo.id, setor_id=dados.setor_id)
             .first()
         )
         if participante:
             participante.status = "respondido"
-            participante.respondido_em = datetime.datetime.utcnow()
+            participante.respondido_em = tempo.agora()
 
     session.commit()
     session.refresh(pedido)
@@ -217,11 +247,27 @@ def listar_solicitacoes(
 
 
 def deletar_solicitacao(session: Session, sol_id: int) -> None:
-    """Remove uma solicitação de compra e suas compras avulsas associadas."""
+    """Remove uma solicitação de compra e suas compras avulsas associadas.
+
+    Se for a última solicitação do pedido, remove também o cabeçalho
+    (SolicitacaoPedido) para não deixar pedidos órfãos sem itens.
+    """
     sol = session.get(SolicitacaoMaterial, sol_id)
     if sol:
+        pedido_id = sol.pedido_id
         session.query(CompraAvulsa).filter(CompraAvulsa.solicitacao_id == sol_id).delete()
         session.delete(sol)
+        session.flush()
+        if pedido_id is not None:
+            restantes = (
+                session.query(SolicitacaoMaterial)
+                .filter(SolicitacaoMaterial.pedido_id == pedido_id)
+                .count()
+            )
+            if restantes == 0:
+                pedido = session.get(SolicitacaoPedido, pedido_id)
+                if pedido:
+                    session.delete(pedido)
         session.commit()
 
 
@@ -640,7 +686,7 @@ def consolidar_periodo(
             lista.motivo_sugestao = r.motivo_sugestao
             lista.valor_estimado = r.valor_estimado
             lista.fornecedor_sugerido_id = r.fornecedor_sugerido_id
-            lista.atualizado_em = datetime.datetime.utcnow()
+            lista.atualizado_em = tempo.agora()
             # Preserva decisões manuais se já foram registradas
             if not editado_manualmente:
                 lista.quantidade_final_definida = None
@@ -729,7 +775,7 @@ def aprovar_item(
     lista.quantidade_final_definida = qtd_final
     lista.observacao = observacao
     lista.incluir_na_lista_final = True
-    lista.atualizado_em = datetime.datetime.utcnow()
+    lista.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(lista)
     return lista
@@ -741,7 +787,7 @@ def remover_da_lista(session: Session, lista_id: int) -> ItemListaCompra:
     if lista is None:
         raise ValueError(f"ItemListaCompra {lista_id} não encontrado")
     lista.incluir_na_lista_final = False
-    lista.atualizado_em = datetime.datetime.utcnow()
+    lista.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(lista)
     return lista

@@ -69,13 +69,14 @@ services/
   calculos_service.py     Serviços auxiliares de cálculo
 
 core/
-  database.py             Engine singleton SQLAlchemy + get_session_factory()
+  database.py             Engine singleton SQLAlchemy + get_session_factory() + migrações idempotentes
   models.py               Modelos ORM: todas as tabelas do banco
   schemas.py              Schemas Pydantic para validação de entrada
   engine.py               Motor de análise de reposição (sem estado, testável isolado)
+  calculos.py             Cálculo estatístico da revisão mensal (sem estado)
+  tempo.py                Helpers de data/hora — tempo.agora() / tempo.hoje() em hora de Brasília
   ui.py                   CSS global, cabeçalhos, badges, formatação BRL, geração de links
   config.py               Constantes de caminho, DATABASE_URL, APP_BASE_URL, credenciais WA
-  calculos.py             Funções auxiliares de cálculo
 
 documents/
   lista_compras.py        Geração do DOCX da lista de compras
@@ -193,6 +194,7 @@ else:
 - `pages/` nunca acessa o banco diretamente — apenas chama serviços.
 - `services/` nunca renderiza Streamlit — apenas lógica e banco.
 - Uploads em `data/uploads/`, exportações em `data/exports/`.
+- **Fuso horário**: todo o sistema (gravação, comparação e exibição) opera em hora local de Brasília (America/Sao_Paulo), como datetime naive. Usar sempre `tempo.agora()` / `tempo.hoje()` de `core/tempo.py` — nunca `datetime.utcnow()`, `datetime.now()` ou `date.today()` diretos. Timestamps antigos gravados em UTC foram convertidos por migração única (marcador `tz_local_migrada` em `schema_meta`, com backup `data/estoque_pre_tz_*.bak`).
 
 ---
 

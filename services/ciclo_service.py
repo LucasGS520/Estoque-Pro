@@ -1,6 +1,8 @@
 """Serviços de gestão do Ciclo Mensal de Solicitações de Materiais."""
 
 import datetime
+
+from core import tempo
 from dataclasses import dataclass
 from typing import Optional
 
@@ -71,7 +73,7 @@ def _enviar_e_registrar(
     )
 
     if resultado.sucesso:
-        participante.envio_notificado_em = datetime.datetime.utcnow()
+        participante.envio_notificado_em = tempo.agora()
         participante.falha_envio = False
         participante.motivo_falha = None
     else:
@@ -104,7 +106,7 @@ def abrir_ciclo(
 
     ciclo = CicloSolicitacaoMaterial(
         periodo_referencia=periodo_referencia,
-        abertura_em=datetime.datetime.utcnow(),
+        abertura_em=tempo.agora(),
         prazo_resposta_em=prazo_resposta_em,
         status="aberto",
     )
@@ -150,7 +152,7 @@ def encerrar_ciclo(session: Session, ciclo_id: int) -> CicloSolicitacaoMaterial:
     if not ciclo:
         raise ValueError(f"Ciclo {ciclo_id} não encontrado.")
     ciclo.status = "encerrado"
-    ciclo.encerrado_em = datetime.datetime.utcnow()
+    ciclo.encerrado_em = tempo.agora()
     session.commit()
     # Notifica automaticamente os setores que não responderam
     enviar_notificacoes_encerramento(session, ciclo_id)
@@ -383,7 +385,7 @@ def enviar_lembretes_pendentes(session: Session, ciclo_id: int) -> dict:
             continue
         res = notificacao_service.enviar_lembrete(setor.whatsapp, periodo_label, setor.nome, prazo_label)
         if res.sucesso:
-            p.notificacao_lembrete_d2_em = datetime.datetime.utcnow()
+            p.notificacao_lembrete_d2_em = tempo.agora()
             enviados += 1
         else:
             falhas_api += 1
@@ -416,7 +418,7 @@ def enviar_avisos_prazo_proximo(session: Session, ciclo_id: int) -> dict:
             continue
         res = notificacao_service.enviar_aviso_prazo_proximo(setor.whatsapp, periodo_label, setor.nome, prazo_label)
         if res.sucesso:
-            p.notificacao_prazo_proximo_em = datetime.datetime.utcnow()
+            p.notificacao_prazo_proximo_em = tempo.agora()
             enviados += 1
         else:
             falhas_api += 1
@@ -448,7 +450,7 @@ def enviar_notificacoes_encerramento(session: Session, ciclo_id: int) -> dict:
             continue
         res = notificacao_service.enviar_aviso_encerramento(setor.whatsapp, periodo_label, setor.nome)
         if res.sucesso:
-            p.notificacao_encerramento_em = datetime.datetime.utcnow()
+            p.notificacao_encerramento_em = tempo.agora()
             enviados += 1
         else:
             falhas_api += 1
@@ -497,7 +499,7 @@ def enviar_feedbacks_aprovacao(
         )
         if res.sucesso:
             if participante:
-                participante.notificacao_feedback_em = datetime.datetime.utcnow()
+                participante.notificacao_feedback_em = tempo.agora()
             enviados += 1
         else:
             falhas_api += 1
@@ -512,7 +514,11 @@ def marcar_setor_respondido(
     setor_id: int,
     sem_solicitacao: bool = False,
 ) -> Optional[CicloSolicitacaoSetor]:
-    """Marca o registro de participação do setor como respondido ou sem solicitação."""
+    """Marca o registro de participação do setor como respondido ou sem solicitação.
+
+    Levanta ValueError ao tentar marcar 'sem_solicitacao' quando o setor já
+    enviou pedidos neste ciclo — o status 'respondido' não pode ser sobrescrito.
+    """
     participante = (
         session.query(CicloSolicitacaoSetor)
         .filter_by(ciclo_id=ciclo_id, setor_id=setor_id)
@@ -520,7 +526,19 @@ def marcar_setor_respondido(
     )
     if not participante:
         return None
+    if sem_solicitacao:
+        tem_pedidos = (
+            session.query(SolicitacaoPedido.id)
+            .filter_by(ciclo_id=ciclo_id, setor_id=setor_id)
+            .first()
+            is not None
+        )
+        if tem_pedidos:
+            raise ValueError(
+                "O setor já enviou solicitações neste ciclo — "
+                "não é possível marcá-lo como 'sem necessidade'."
+            )
     participante.status = "sem_solicitacao" if sem_solicitacao else "respondido"
-    participante.respondido_em = datetime.datetime.utcnow()
+    participante.respondido_em = tempo.agora()
     session.commit()
     return participante

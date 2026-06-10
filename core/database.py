@@ -4,9 +4,12 @@ Expõe o `Base` declarativo dos modelos, cria o engine SQLite sob demanda e
 fornece factories de sessão para telas, serviços e rotinas de migração.
 """
 
+import shutil
+from pathlib import Path
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
-from core.config import DATABASE_URL, DATA_DIR
+from core.config import DATABASE_URL, DATA_DIR, DB_PATH
 
 Base = declarative_base()
 
@@ -105,6 +108,94 @@ def run_schema_migrations(engine):
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_revisao_item_periodo "
             "ON revisoes_mensais (item_id, periodo_descricao)"
         ))
+        conn.commit()
+
+        # Remove cabeçalhos de pedido órfãos (sem nenhuma solicitação vinculada).
+        # deletar_solicitacao agora limpa o cabeçalho junto com o último item;
+        # este DELETE idempotente saneia registros criados antes dessa correção.
+        conn.execute(text("""
+            DELETE FROM solicitacoes_pedido
+            WHERE id NOT IN (
+                SELECT DISTINCT pedido_id
+                FROM solicitacoes_material
+                WHERE pedido_id IS NOT NULL
+            )
+        """))
+        conn.commit()
+
+    _migrar_timestamps_para_hora_local(engine)
+
+
+# Colunas DateTime gravadas com utcnow() antes da padronização em hora local.
+# Campos digitados pelo usuário (prazo_resposta_em, data_cotacao, periodo_referencia,
+# data_inicio/fim_analise) já estavam em hora local e NÃO entram aqui.
+_COLUNAS_TZ_MIGRACAO = {
+    "categorias": ["criado_em"],
+    "itens": [
+        "criado_em", "atualizado_em",
+        "data_definicao_minimo_manual", "data_definicao_ideal_manual",
+    ],
+    "fornecedores": ["criado_em"],
+    "precos_fornecedor": ["criado_em"],
+    "setores": ["criado_em"],
+    "movimentacoes": ["criado_em"],
+    "snapshots_analise": ["criado_em"],
+    "revisoes_mensais": ["criado_em"],
+    "ciclos_solicitacao_material": ["criado_em", "abertura_em", "encerrado_em"],
+    "ciclo_solicitacao_setores": [
+        "respondido_em", "envio_notificado_em",
+        "notificacao_lembrete_d2_em", "notificacao_prazo_proximo_em",
+        "notificacao_encerramento_em", "notificacao_feedback_em",
+    ],
+    "solicitacoes_pedido": ["criado_em"],
+    "solicitacoes_material": ["criado_em"],
+    "compras_avulsas": ["criado_em"],
+    "itens_lista_compra": ["criado_em", "atualizado_em"],
+    "importacoes": ["criado_em"],
+}
+
+
+def _migrar_timestamps_para_hora_local(engine):
+    """Migração única: converte timestamps históricos de UTC para hora local (-3h).
+
+    O sistema passou a gravar tudo em hora de Brasília (core/tempo.py); registros
+    antigos foram gravados com utcnow() e ficariam 3h adiantados. Idempotente via
+    marcador 'tz_local_migrada' na tabela schema_meta — nunca roda duas vezes.
+    Cria backup do arquivo SQLite antes de alterar qualquer linha.
+    """
+    from core import tempo
+
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS schema_meta (chave TEXT PRIMARY KEY, valor TEXT)"
+        ))
+        conn.commit()
+
+        ja_migrado = conn.execute(text(
+            "SELECT 1 FROM schema_meta WHERE chave = 'tz_local_migrada'"
+        )).first()
+        if ja_migrado:
+            return
+
+        # Backup do arquivo antes da única operação destrutiva do upgrade.
+        # Usa o caminho do próprio engine (não DB_PATH fixo) para também
+        # funcionar corretamente em bancos de teste/cópias.
+        db_file = Path(engine.url.database) if engine.url.database else DB_PATH
+        if db_file.exists():
+            sufixo = tempo.agora().strftime("%Y%m%d_%H%M%S")
+            shutil.copy2(db_file, db_file.with_name(f"{db_file.stem}_pre_tz_{sufixo}.bak"))
+
+        # Transação única: ou todas as colunas migram junto com o marcador,
+        # ou nada é alterado (uma falha no meio não deixa migração parcial).
+        for tabela, colunas in _COLUNAS_TZ_MIGRACAO.items():
+            for col in colunas:
+                conn.execute(text(
+                    f"UPDATE {tabela} SET {col} = datetime({col}, '-3 hours') "
+                    f"WHERE {col} IS NOT NULL"
+                ))
+        conn.execute(text(
+            "INSERT INTO schema_meta (chave, valor) VALUES ('tz_local_migrada', :v)"
+        ), {"v": tempo.agora().isoformat()})
         conn.commit()
 
 
