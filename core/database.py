@@ -123,6 +123,29 @@ def run_schema_migrations(engine):
         """))
         conn.commit()
 
+        # Invariante da Lista Final: item aprovado exige quantidade final >= 1.
+        # Saneia registros gravados antes da validação: aprovados com quantidade
+        # nula/zerada recebem a quantidade sugerida; sem sugerida válida, saem
+        # da lista final. Compras avulsas zeradas voltam ao mínimo de 1.
+        conn.execute(text("""
+            UPDATE itens_lista_compra
+            SET quantidade_final_definida = quantidade_sugerida
+            WHERE incluir_na_lista_final = 1
+              AND (quantidade_final_definida IS NULL OR quantidade_final_definida <= 0)
+              AND quantidade_sugerida > 0
+        """))
+        conn.execute(text("""
+            UPDATE itens_lista_compra
+            SET incluir_na_lista_final = 0
+            WHERE incluir_na_lista_final = 1
+              AND (quantidade_final_definida IS NULL OR quantidade_final_definida <= 0)
+        """))
+        conn.execute(text(
+            "UPDATE compras_avulsas SET quantidade = 1 "
+            "WHERE quantidade IS NULL OR quantidade <= 0"
+        ))
+        conn.commit()
+
     _migrar_timestamps_para_hora_local(engine)
 
 

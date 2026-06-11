@@ -1009,7 +1009,7 @@ elif aba == "Solicitações e Pendências":
 
         if n_aprovadas > 0 and not _sol_readonly:
             st.info(
-                f"✅ {n_aprovadas} solicitação(ões) aprovada(s) aguardando Consolidação. "
+                f"{n_aprovadas} solicitação(ões) aprovada(s) aguardando Consolidação. "
                 "Execute **Análise Mensal de Compras** para incluí-las.",
                 icon="ℹ️",
             )
@@ -1076,10 +1076,16 @@ elif aba == "Solicitações e Pendências":
             _envio_idx     = _pedidos_setor.index(_gkey) + 1 if _gkey in _pedidos_setor else 1
             _badge_envio   = f"  ·  {_envio_idx}º Envio" if len(_pedidos_setor) > 1 else ""
 
-            label_exp = (
-                f"🏢  {setor_nome}  ·  {solicitante}  ·  {data_doc}"
-                f"  —  {n_itens} item(ns)  ·  {resumo}{sufixo_label}{_badge_envio}"
-            )
+            if concluido:
+                label_exp = (
+                    f"{setor_nome}  ·  {solicitante}  ·  {data_doc}"
+                    f"  —  {n_itens} item(ns)  ·  ✅ Concluído{_badge_envio}"
+                )
+            else:
+                label_exp = (
+                    f"{setor_nome}  ·  {solicitante}  ·  {data_doc}"
+                    f"  —  {n_itens} item(ns)  ·  {resumo}{_badge_envio}"
+                )
 
             _exp_key = f"exp_open_{_gkey}"
             with st.expander(label_exp, expanded=st.session_state.get(_exp_key, False)):
@@ -1315,12 +1321,12 @@ elif aba == "Consolidação":
             if _avisos_conso:
                 st.caption(
                     f"⚠️ {' · '.join(_avisos_conso)} — "
-                    f"resolva em **Solicitações e Pendências** e rode novamente a análise."
+                    f"resolva em **Editar** ou **Solicitações e Pendências** e rode novamente a análise."
                 )
             st.caption(
-                "Edite 'Qtd Final' e 'Observação' quando necessário. "
-                "O campo 'Motivo do Sistema' explica o raciocínio por trás da quantidade sugerida. "
+                "Edite 'Qtd Final' para compra, quando necessário. "
                 "Marque 'Incluir na Lista' e clique em Salvar para aprovar."
+                "O campo 'Motivo do Sistema' explica o raciocínio por trás da quantidade sugerida. "
             )
 
             rows_ed = []
@@ -1377,7 +1383,10 @@ elif aba == "Consolidação":
                 "Ideal":            st.column_config.NumberColumn("Ideal", disabled=True),
                 "Solicitado":       st.column_config.NumberColumn("Solicitado", disabled=True),
                 "Qtd Sugerida":     st.column_config.NumberColumn("Qtd Sugerida", disabled=True),
-                "Qtd Final":           st.column_config.NumberColumn("Qtd Final", min_value=0),
+                "Qtd Final":           st.column_config.NumberColumn(
+                    "Qtd Final", min_value=1, step=1, required=True,
+                    help="Quantidade a comprar — obrigatória e maior que zero.",
+                ),
                 "Incluir na Lista":    st.column_config.CheckboxColumn("Incluir na Lista"),
                 "Motivo do Sistema":   st.column_config.TextColumn("Motivo do Sistema", disabled=True, width="large"),
             }
@@ -1390,6 +1399,18 @@ elif aba == "Consolidação":
                     use_container_width=True,
                 )
             else:
+                _col_btn1, _col_btn2, _ = st.columns([1, 1.2, 10.6])
+                with _col_btn1:
+                    if st.button("☑ Marcar Todos", key="btn_sel_tudo"):
+                        st.session_state["consolidacao_sel_tudo"] = True
+                with _col_btn2:
+                    if st.button("☐ Desmarcar Todos", key="btn_limpar_sel"):
+                        st.session_state["consolidacao_sel_tudo"] = False
+
+                _sel_override = st.session_state.get("consolidacao_sel_tudo")
+                if _sel_override is not None:
+                    df_ed["Incluir na Lista"] = _sel_override
+
                 edited_df = st.data_editor(
                     df_ed,
                     column_config=col_config,
@@ -1400,28 +1421,48 @@ elif aba == "Consolidação":
                 )
 
             if not _consolidacao_readonly and st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
-                with SessionLocal() as _s:
-                    # IDs que estão visíveis na tabela agora
-                    ids_na_tabela = {int(r["_id"]) for _, r in edited_df.iterrows() if r["_tipo"] == "lista"}
-                    # Itens aprovados anteriormente que sumiram da tabela (qtd_sugerida voltou a 0)
-                    # precisam ser removidos da lista final para manter consistência
-                    for x in get_consolidacao_periodo(_s, periodo):
-                        if x.id not in ids_na_tabela and x.incluir_na_lista_final:
-                            remover_da_lista(_s, x.id)
-                    # Processa o que está visível na tabela
-                    for _, row in edited_df.iterrows():
-                        item_id   = int(row["_id"])
-                        qtd_final = int(row["Qtd Final"]) if pd.notna(row["Qtd Final"]) else 0
-                        incluir   = bool(row["Incluir na Lista"])
-                        if row["_tipo"] == "avulsa":
-                            atualizar_compra_avulsa(_s, item_id, quantidade=qtd_final, incluir_na_lista_final=incluir)
-                        else:
-                            if incluir:
-                                aprovar_item(_s, item_id, qtd_final, None)
-                            else:
-                                remover_da_lista(_s, item_id)
-                st.success("Alterações salvas com sucesso.")
-                st.rerun()
+                # Valida antes de persistir: Qtd Final é obrigatória e >= 1 para
+                # itens marcados na lista e para toda compra avulsa. Nada é salvo
+                # enquanto houver valor inválido.
+                _itens_invalidos = []
+                for _, row in edited_df.iterrows():
+                    _qtd_invalida = pd.isna(row["Qtd Final"]) or int(row["Qtd Final"]) < 1
+                    _exige_qtd = row["_tipo"] == "avulsa" or bool(row["Incluir na Lista"])
+                    if _exige_qtd and _qtd_invalida:
+                        _itens_invalidos.append(str(row["Item"]))
+                if _itens_invalidos:
+                    st.error(
+                        f"**Nada foi salvo.** Corrija a Qtd Final de: {', '.join(_itens_invalidos)} — "
+                        f"o valor é obrigatório e deve ser um número inteiro maior que zero."
+                    )
+                else:
+                    try:
+                        with SessionLocal() as _s:
+                            # IDs que estão visíveis na tabela agora
+                            ids_na_tabela = {int(r["_id"]) for _, r in edited_df.iterrows() if r["_tipo"] == "lista"}
+                            # Itens aprovados anteriormente que sumiram da tabela (qtd_sugerida voltou a 0)
+                            # precisam ser removidos da lista final para manter consistência
+                            for x in get_consolidacao_periodo(_s, periodo):
+                                if x.id not in ids_na_tabela and x.incluir_na_lista_final:
+                                    remover_da_lista(_s, x.id)
+                            # Processa o que está visível na tabela
+                            for _, row in edited_df.iterrows():
+                                item_id   = int(row["_id"])
+                                qtd_final = int(row["Qtd Final"]) if pd.notna(row["Qtd Final"]) else None
+                                incluir   = bool(row["Incluir na Lista"])
+                                if row["_tipo"] == "avulsa":
+                                    atualizar_compra_avulsa(_s, item_id, quantidade=qtd_final, incluir_na_lista_final=incluir)
+                                else:
+                                    if incluir:
+                                        aprovar_item(_s, item_id, qtd_final, None)
+                                    else:
+                                        remover_da_lista(_s, item_id)
+                    except ValueError as _exc_salvar:
+                        st.error(f"Não foi possível salvar: {_exc_salvar}")
+                    else:
+                        st.success("Alterações salvas com sucesso.")
+                        st.session_state.pop("consolidacao_sel_tudo", None)
+                        st.rerun()
 
         else:
             if sem_param_conso:
@@ -1452,32 +1493,18 @@ elif aba == "Consolidação":
             {
                 "item_nome": x.item.nome if x.item else "—",
                 "categoria": x.item.categoria.nome if x.item and x.item.categoria else "—",
-                "qtd_sugerida": x.quantidade_sugerida,
-                "qtd_final": (
-                    x.quantidade_final_definida
-                    if x.quantidade_final_definida is not None
-                    else x.quantidade_sugerida
-                ),
-                "observacao": x.observacao or "—",
-                "fornecedor": x.fornecedor_sugerido.nome if x.fornecedor_sugerido else "—",
-                "valor_est": x.valor_estimado,
+                "tipo": "Estoque",
                 "estoque_atual": x.estoque_atual_snap,
-                "estoque_minimo": x.estoque_minimo_snap,
-                "estoque_ideal": x.estoque_ideal_snap,
+                "qtd_compra": x.quantidade_final_definida or x.quantidade_sugerida,
             }
             for x in lista_final
         ] + [
             {
                 "item_nome": ca.nome_item,
                 "categoria": "—",
-                "qtd_sugerida": None,
-                "qtd_final": ca.quantidade,
-                "observacao": ca.observacao or "—",
-                "fornecedor": "—",
-                "valor_est": None,
+                "tipo": "Compra Avulsa",
                 "estoque_atual": None,
-                "estoque_minimo": None,
-                "estoque_ideal": None,
+                "qtd_compra": ca.quantidade,
             }
             for ca in avulsas_final
         ]
@@ -1496,34 +1523,29 @@ elif aba == "Consolidação":
             {
                 "Item": info["item_nome"],
                 "Categoria": info["categoria"],
-                "Qtd Sugerida": info["qtd_sugerida"],
-                "Qtd Final": info["qtd_final"],
-                "Observação": info["observacao"],
-                "Fornecedor": info["fornecedor"],
-                "Valor Est.": fmt_brl(info["valor_est"]) if info["valor_est"] else "—",
+                "Tipo": info["tipo"],
+                "Estoque Atual": info["estoque_atual"],
+                "Qtd Compra": info["qtd_compra"],
             }
             for info in lista_final_info
         ]
         st.dataframe(pd.DataFrame(rows_final), use_container_width=True, hide_index=True)
 
-        total_est = sum(i["valor_est"] for i in lista_final_info if i["valor_est"])
-        if total_est:
-            st.metric("Valor total estimado", fmt_brl(total_est))
-
         df_docx = pd.DataFrame([
             {
                 "Item": i["item_nome"],
                 "Categoria": i["categoria"],
-                "Atual": i["estoque_atual"],
-                "Mínimo": i["estoque_minimo"],
-                "Ideal": i["estoque_ideal"],
-                "Comprar": i["qtd_final"],
-                "Fornecedor": i["fornecedor"],
-                "Valor Est.": fmt_brl(i["valor_est"]) if i["valor_est"] else "—",
+                "Tipo": i["tipo"],
+                "Estoque Atual": i["estoque_atual"],
+                "Qtd Compra": i["qtd_compra"],
             }
             for i in lista_final_info
         ])
-        caminho_docx = gerar_lista_compras(df_docx)
+        caminho_docx = gerar_lista_compras(
+            df_docx,
+            periodo=periodo_label,
+            data_geracao=tempo.hoje().strftime("%d/%m/%Y"),
+        )
         with open(caminho_docx, "rb") as f:
             docx_bytes = f.read()
         st.download_button(

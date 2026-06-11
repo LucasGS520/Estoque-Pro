@@ -514,11 +514,18 @@ def atualizar_compra_avulsa(
     quantidade: Optional[int] = None,
     incluir_na_lista_final: Optional[bool] = None,
 ) -> CompraAvulsa:
-    """Atualiza quantidade e/ou flag incluir_na_lista_final de uma compra avulsa."""
+    """Atualiza quantidade e/ou flag incluir_na_lista_final de uma compra avulsa.
+
+    Quantidade, quando informada, deve ser >= 1.
+    """
     ca = session.get(CompraAvulsa, ca_id)
     if ca is None:
         raise ValueError(f"Compra avulsa {ca_id} não encontrada")
     if quantidade is not None:
+        if quantidade < 1:
+            raise ValueError(
+                "Quantidade da compra avulsa deve ser um número inteiro maior que zero."
+            )
         ca.quantidade = quantidade
     if incluir_na_lista_final is not None:
         ca.incluir_na_lista_final = incluir_na_lista_final
@@ -768,7 +775,15 @@ def aprovar_item(
     qtd_final: int,
     observacao: Optional[str] = None,
 ) -> ItemListaCompra:
-    """Aprova um item para a lista final com quantidade e observação definidas."""
+    """Aprova um item para a lista final com quantidade e observação definidas.
+
+    A quantidade final é obrigatória e deve ser >= 1 — item aprovado para a
+    lista final nunca pode ficar com quantidade nula ou zerada.
+    """
+    if qtd_final is None or qtd_final < 1:
+        raise ValueError(
+            "Quantidade final deve ser um número inteiro maior que zero."
+        )
     lista = session.get(ItemListaCompra, lista_id)
     if lista is None:
         raise ValueError(f"ItemListaCompra {lista_id} não encontrado")
