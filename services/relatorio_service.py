@@ -5,6 +5,8 @@ páginas Streamlit. Nenhuma função deste módulo persiste alterações no banc
 """
 
 import datetime
+
+from core import tempo
 from typing import Optional
 
 import pandas as pd
@@ -44,7 +46,7 @@ def consumo_por_categoria(session: Session, meses: Optional[int] = None) -> pd.D
     """
     q = session.query(Movimentacao).filter(Movimentacao.tipo == "saida")
     if meses is not None:
-        desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
+        desde = tempo.agora() - datetime.timedelta(days=meses * 30)
         q = q.filter(Movimentacao.criado_em >= desde)
     movs = q.all()
     if not movs:
@@ -112,7 +114,7 @@ def historico_movimentacoes(
 
 def consumo_por_setor(session: Session, meses: int = 6) -> pd.DataFrame:
     """Agrega total de saídas por setor nos últimos N meses."""
-    desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
+    desde = tempo.agora() - datetime.timedelta(days=meses * 30)
     movs = (
         session.query(Movimentacao)
         .options(joinedload(Movimentacao.setor))
@@ -148,7 +150,7 @@ def consumo_por_item(
 
     Quando `setor_id` é informado, filtra apenas as saídas daquele setor.
     """
-    desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
+    desde = tempo.agora() - datetime.timedelta(days=meses * 30)
     q = (
         session.query(Movimentacao)
         .options(
@@ -196,7 +198,7 @@ def consumo_e_entradas_por_mes(session: Session, meses: int = 6) -> pd.DataFrame
     ideal para o gráfico de visão consolidada e linha de tendência.
     Retorna colunas: ["mes", "total_saida", "total_entrada"] ordenadas por mes ASC.
     """
-    desde = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=meses * 30)
+    desde = tempo.agora() - datetime.timedelta(days=meses * 30)
     movs = (
         session.query(Movimentacao)
         .filter(

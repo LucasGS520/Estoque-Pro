@@ -11,14 +11,21 @@ import streamlit as st
 import pandas as pd
 
 from core.database import get_session_factory
-from core.ui import setup_page, page_header, section_title
+from core.ui import formatar_telefone, setup_page, page_header, section_title
 from services import estoque_service, fornecedor_service, calculos_service
 
 
-def _validar_telefone(tel: str) -> bool:
-    if not tel.strip():
-        return True
-    return bool(re.match(r'^\(\d{2}\)\s?\d{4,5}-\d{4}$', tel.strip()))
+def _formatar_telefone(tel: str):
+    """Extrai dígitos e formata (XX) XXXX-XXXX ou (XX) XXXXX-XXXX.
+    Retorna string formatada, "" se vazio, ou None se dígitos insuficientes."""
+    digits = re.sub(r'\D', '', tel)
+    if not digits:
+        return ""
+    if len(digits) == 10:
+        return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
+    if len(digits) == 11:
+        return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+    return None
 
 
 def _validar_email(email: str) -> bool:
@@ -190,7 +197,7 @@ elif tab_sel == "Registrar Movimentação":
     section_title("Dados da movimentação")
     col1, col2 = st.columns(2)
     with col1:
-        tipo_mov = st.selectbox("Tipo", ["entrada", "saida"], key="mov_tipo")
+        tipo_mov = st.selectbox("Tipo", ["entrada", "saida"], key=f"mov_tipo_{_mov_v}")
     with col2:
         qtd_mov = st.number_input("Quantidade", min_value=1, value=1, key=f"mov_qtd_{_mov_v}")
 
@@ -343,7 +350,7 @@ elif tab_sel == "Editar":
                         with col_c:
                             ni_minimo = st.number_input("Mínimo manual", min_value=0, value=0, key=f"ni_minimo_{_ni_v}")
                         with col_d:
-                            ni_ideal = st.number_input("Ideal manual", min_value=0, value=0, key=f"ni_ideal_{_ni_v}")
+                            ni_ideal = st.number_input("Ideal manual", min_value=ni_minimo, value=ni_minimo, key=f"ni_ideal_{_ni_v}")
                     with SessionLocal() as session:
                         forn_opts_ni = fornecedor_service.get_all_fornecedores(session)
                         forn_map_ni = {f.nome: f.id for f in forn_opts_ni}
@@ -362,8 +369,10 @@ elif tab_sel == "Editar":
                             st.error("Selecione uma categoria.")
                         elif not ni_nome.strip():
                             st.error("Nome não pode ficar em branco.")
-                        elif ni_minimo > 0 and ni_ideal > 0 and ni_ideal < ni_minimo:
-                            st.error("Ideal manual não pode ser menor que Mínimo manual.")
+                        elif ni_ideal > 0 and ni_minimo == 0:
+                            st.error("Se informar o Ideal, informe também o Mínimo.")
+                        elif ni_ideal > 0 and ni_ideal < ni_minimo:
+                            st.error(f"Ideal ({ni_ideal}) não pode ser menor que Mínimo ({ni_minimo}).")
                         else:
                             try:
                                 with st.spinner("Salvando..."):
@@ -549,30 +558,28 @@ elif tab_sel == "Editar":
                                     st.session_state[f"confirm_rem_manual_{item_ei_id}"] = True
 
                         if st.session_state.get(f"show_manual_form_{item_ei_id}"):
-                            with st.form(key=f"form_manual_{item_ei_id}"):
-                                st.markdown("**Definir valores manuais**")
-                                col_m1, col_m2 = st.columns(2)
-                                with col_m1:
-                                    novo_min = st.number_input(
-                                        "Mínimo manual", min_value=0,
-                                        value=ei_minimo_manual or ei_minimo_vigente,
-                                        key=f"manual_min_{item_ei_id}",
-                                    )
-                                with col_m2:
-                                    novo_ideal = st.number_input(
-                                        "Ideal manual", min_value=0,
-                                        value=ei_ideal_manual or ei_ideal_vigente,
-                                        key=f"manual_ideal_{item_ei_id}",
-                                    )
-                                col_fs, col_fc = st.columns(2)
-                                with col_fs:
-                                    submitted_manual = st.form_submit_button("Salvar manual", type="primary", use_container_width=True)
-                                with col_fc:
-                                    cancel_manual = st.form_submit_button("Cancelar", use_container_width=True)
-
-                                if submitted_manual:
-                                    if novo_ideal > 0 and novo_min > 0 and novo_ideal < novo_min:
-                                        st.error("Ideal não pode ser menor que Mínimo.")
+                            st.markdown("**Definir valores manuais**")
+                            col_m1, col_m2 = st.columns(2)
+                            with col_m1:
+                                novo_min = st.number_input(
+                                    "Mínimo manual", min_value=0,
+                                    value=ei_minimo_manual or ei_minimo_vigente or 0,
+                                    key=f"manual_min_{item_ei_id}",
+                                )
+                            with col_m2:
+                                _ideal_default = max(ei_ideal_manual or ei_ideal_vigente or 0, novo_min)
+                                novo_ideal = st.number_input(
+                                    "Ideal manual", min_value=novo_min,
+                                    value=_ideal_default,
+                                    key=f"manual_ideal_{item_ei_id}",
+                                )
+                            col_fs, col_fc = st.columns(2)
+                            with col_fs:
+                                if st.button("Salvar manual", type="primary", use_container_width=True, key=f"btn_save_manual_{item_ei_id}"):
+                                    if novo_ideal > 0 and novo_min == 0:
+                                        st.error("Se informar o Ideal, informe também o Mínimo.")
+                                    elif novo_ideal > 0 and novo_ideal < novo_min:
+                                        st.error(f"Ideal ({novo_ideal}) não pode ser menor que Mínimo ({novo_min}).")
                                     else:
                                         with SessionLocal() as session:
                                             calculos_service.aplicar_minimo_ideal_manual(
@@ -581,7 +588,8 @@ elif tab_sel == "Editar":
                                         st.session_state.pop(f"show_manual_form_{item_ei_id}", None)
                                         st.session_state["_fb"] = ("success", "Valores manuais definidos.")
                                         st.rerun()
-                                if cancel_manual:
+                            with col_fc:
+                                if st.button("Cancelar", use_container_width=True, key=f"btn_cancel_manual_{item_ei_id}"):
                                     st.session_state.pop(f"show_manual_form_{item_ei_id}", None)
                                     st.rerun()
 
@@ -708,17 +716,18 @@ elif tab_sel == "Editar":
             with st.container(border=True):
                 nf_nome = st.text_input("Nome", key=f"nf_nome_{_nf_v}")
                 nf_contato = st.text_input("Contato", key=f"nf_contato_{_nf_v}")
-                nf_tel = st.text_input("Telefone", key=f"nf_tel_{_nf_v}")
+                nf_tel = st.text_input("Telefone", placeholder="Ex: 11999998888", help="Digite apenas os números com DDD", key=f"nf_tel_{_nf_v}")
                 nf_email = st.text_input("E-mail", key=f"nf_email_{_nf_v}")
                 nf_pref = st.checkbox("Preferencial", key=f"nf_pref_{_nf_v}")
                 nf_ativo = st.checkbox("Ativo", value=True, key=f"nf_ativo_{_nf_v}")
 
                 if st.button("Cadastrar", key="btn_nf_cadastrar", type="primary", use_container_width=True):
                     _erros_nf = []
+                    _nf_tel_fmt = _formatar_telefone(nf_tel)
                     if not nf_nome.strip():
                         _erros_nf.append("Nome não pode ficar em branco.")
-                    if not _validar_telefone(nf_tel):
-                        _erros_nf.append("Telefone inválido. Use o formato (XX) XXXXX-XXXX ou (XX) XXXX-XXXX.")
+                    if _nf_tel_fmt is None:
+                        _erros_nf.append("Telefone inválido. Digite 10 ou 11 dígitos com DDD (ex: 11999998888).")
                     if not _validar_email(nf_email):
                         _erros_nf.append("E-mail inválido.")
                     if _erros_nf:
@@ -729,7 +738,7 @@ elif tab_sel == "Editar":
                             with st.spinner("Salvando..."):
                                 with SessionLocal() as session:
                                     forn_criado = fornecedor_service.create_fornecedor(
-                                        session, nf_nome, nf_contato, nf_tel, nf_email, nf_pref, nf_ativo
+                                        session, nf_nome, nf_contato, _nf_tel_fmt, nf_email, nf_pref, nf_ativo
                                     )
                                     forn_nome_criado = forn_criado.nome
                             st.session_state["_nf_v"] = _nf_v + 1
@@ -760,7 +769,8 @@ elif tab_sel == "Editar":
                         "Contato", value=forn_sel["contato_nome"], key=f"ef_{forn_sel_id}_contato"
                     )
                     ef_tel = st.text_input(
-                        "Telefone", value=forn_sel["telefone"], key=f"ef_{forn_sel_id}_tel"
+                        "Telefone", value=forn_sel["telefone"], placeholder="Ex: 11999998888",
+                        help="Digite apenas os números com DDD", key=f"ef_{forn_sel_id}_tel"
                     )
                     ef_email = st.text_input(
                         "E-mail", value=forn_sel["email"], key=f"ef_{forn_sel_id}_email"
@@ -776,10 +786,11 @@ elif tab_sel == "Editar":
                         "Salvar alterações", key="btn_ef_salvar", type="primary", use_container_width=True
                     ):
                         _erros_ef = []
+                        _ef_tel_fmt = _formatar_telefone(ef_tel)
                         if not ef_nome.strip():
                             _erros_ef.append("Nome não pode ficar em branco.")
-                        if not _validar_telefone(ef_tel):
-                            _erros_ef.append("Telefone inválido. Use o formato (XX) XXXXX-XXXX ou (XX) XXXX-XXXX.")
+                        if _ef_tel_fmt is None:
+                            _erros_ef.append("Telefone inválido. Digite 10 ou 11 dígitos com DDD (ex: 11999998888).")
                         if not _validar_email(ef_email):
                             _erros_ef.append("E-mail inválido.")
                         if _erros_ef:
@@ -791,7 +802,7 @@ elif tab_sel == "Editar":
                                     with SessionLocal() as session:
                                         fornecedor_service.update_fornecedor(
                                             session, forn_sel_id,
-                                            ef_nome, ef_contato, ef_tel, ef_email, ef_pref, ef_ativo,
+                                            ef_nome, ef_contato, _ef_tel_fmt, ef_email, ef_pref, ef_ativo,
                                         )
                                 for k in [k for k in st.session_state if k.startswith(f"ef_{forn_sel_id}_")]:
                                     st.session_state.pop(k)
@@ -948,10 +959,20 @@ elif tab_sel == "Editar":
                     st.session_state[f"confirm_del_cat_{cat_ec_id}"] = True
 
                 if st.session_state.get(f"confirm_del_cat_{cat_ec_id}"):
-                    st.warning(
-                        f"Remover **{cat_ec_sel_nome}**? "
-                        "A remoção só é permitida se não houver itens nessa categoria."
-                    )
+                    with SessionLocal() as _s_check:
+                        _n_itens_cat = estoque_service.count_itens_categoria(_s_check, cat_ec_id)
+                    if _n_itens_cat > 0:
+                        st.warning(
+                            f"A categoria **{cat_ec_sel_nome}** possui **{_n_itens_cat} item(ns)** vinculado(s). "
+                            "Ao confirmar, **todos os itens e seus históricos serão excluídos permanentemente** "
+                            "junto com a categoria. Esta ação não pode ser desfeita.",
+                            icon="⚠️",
+                        )
+                    else:
+                        st.warning(
+                            f"Remover a categoria **{cat_ec_sel_nome}**? Esta ação não pode ser desfeita.",
+                            icon="⚠️",
+                        )
                     col_yes, col_no = st.columns(2)
                     with col_yes:
                         if st.button(
@@ -986,6 +1007,7 @@ elif tab_sel == "Editar":
                     "ID": s.id,
                     "Nome": s.nome,
                     "Descrição": s.descricao or "",
+                    "WhatsApp": formatar_telefone(s.whatsapp) if s.whatsapp else "",
                     "Ativo": "Sim" if s.ativo else "Não",
                 }
                 for s in setores_all
@@ -993,7 +1015,7 @@ elif tab_sel == "Editar":
             setor_data = [
                 {
                     "id": s.id, "nome": s.nome, "descricao": s.descricao or "",
-                    "ativo": s.ativo, "mov_count": len(s.movimentacoes),
+                    "whatsapp": s.whatsapp or "", "ativo": s.ativo, "mov_count": len(s.movimentacoes),
                 }
                 for s in setores_all
             ]
@@ -1039,6 +1061,19 @@ elif tab_sel == "Editar":
             with st.container(border=True):
                 ns_nome = st.text_input("Nome do setor", key=f"ns_nome_{_ns_v}")
                 ns_desc = st.text_input("Descrição (opcional)", key=f"ns_desc_{_ns_v}")
+                ns_wpp = st.text_input(
+                    "WhatsApp (opcional)",
+                    placeholder="(11) 99999-9999",
+                    help="Usado para enviar o formulário de solicitação diretamente ao setor. Informe DDD + número.",
+                    key=f"ns_wpp_{_ns_v}",
+                )
+                _ns_wpp_digitos = "".join(c for c in ns_wpp if c.isdigit())
+                if _ns_wpp_digitos:
+                    _ns_norm = "55" + _ns_wpp_digitos if len(_ns_wpp_digitos) in (10, 11) else _ns_wpp_digitos
+                    if len(_ns_norm) in (12, 13) and _ns_norm.startswith("55"):
+                        st.caption(f"✅ Será salvo como: **{formatar_telefone(_ns_norm)}**")
+                    else:
+                        st.caption(f"⚠️ Número incompleto. Informe DDD + número, ex: (11) 99999-9999.")
 
                 if st.button("Cadastrar", key="btn_ns_cadastrar", type="primary", use_container_width=True):
                     if not ns_nome.strip():
@@ -1048,7 +1083,8 @@ elif tab_sel == "Editar":
                             with st.spinner("Salvando..."):
                                 with SessionLocal() as session:
                                     setor_criado = estoque_service.criar_setor(
-                                        session, ns_nome, ns_desc or None
+                                        session, ns_nome, ns_desc or None,
+                                        whatsapp=ns_wpp.strip() or None,
                                     )
                                     setor_nome_criado = setor_criado.nome
                             st.session_state["_ns_v"] = _ns_v + 1
@@ -1078,6 +1114,22 @@ elif tab_sel == "Editar":
                     es_desc = st.text_input(
                         "Descrição", value=set_sel["descricao"], key=f"es_{set_sel_id}_desc"
                     )
+                    _es_wpp_salvo = set_sel["whatsapp"]
+                    _es_wpp_display = formatar_telefone(_es_wpp_salvo) if _es_wpp_salvo else ""
+                    es_wpp = st.text_input(
+                        "WhatsApp (opcional)",
+                        value=_es_wpp_display,
+                        placeholder="(11) 99999-9999",
+                        help="Usado para enviar o formulário de solicitação diretamente ao setor. Informe DDD + número.",
+                        key=f"es_{set_sel_id}_wpp",
+                    )
+                    _es_wpp_digitos = "".join(c for c in es_wpp if c.isdigit())
+                    if _es_wpp_digitos:
+                        _es_norm = "55" + _es_wpp_digitos if len(_es_wpp_digitos) in (10, 11) else _es_wpp_digitos
+                        if len(_es_norm) in (12, 13) and _es_norm.startswith("55"):
+                            st.caption(f"✅ Será salvo como: **{formatar_telefone(_es_norm)}**")
+                        else:
+                            st.caption(f"⚠️ Número incompleto. Informe DDD + número, ex: (11) 99999-9999.")
                     es_ativo = st.checkbox(
                         "Ativo", value=set_sel["ativo"], key=f"es_{set_sel_id}_ativo"
                     )
@@ -1092,7 +1144,8 @@ elif tab_sel == "Editar":
                                 with st.spinner("Salvando..."):
                                     with SessionLocal() as session:
                                         estoque_service.atualizar_setor(
-                                            session, set_sel_id, es_nome, es_desc or None, es_ativo
+                                            session, set_sel_id, es_nome, es_desc or None, es_ativo,
+                                            whatsapp=es_wpp.strip() or None,
                                         )
                                 for k in [k for k in st.session_state if k.startswith(f"es_{set_sel_id}_")]:
                                     st.session_state.pop(k)
@@ -1147,7 +1200,8 @@ elif tab_sel == "Editar":
                                     with SessionLocal() as session:
                                         estoque_service.atualizar_setor(
                                             session, set_sel_id, set_sel_nome,
-                                            set_sel.get("descricao") or None, False
+                                            set_sel.get("descricao") or None, False,
+                                            whatsapp=set_sel.get("whatsapp") or None,
                                         )
                                 st.session_state.pop(f"confirm_del_set_{set_sel_id}", None)
                                 st.session_state["_fb"] = ("success", f"Setor **{set_sel_nome}** desativado.")

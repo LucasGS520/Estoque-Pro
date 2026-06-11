@@ -349,6 +349,41 @@ def fmt_brl(value: float) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def limpar_telefone(valor: str | None) -> str | None:
+    """Normaliza número de WhatsApp/telefone para armazenamento.
+
+    Aceita DDD + número (10-11 dígitos) e adiciona o DDI 55 automaticamente.
+    Também aceita o número completo com DDI 55 (12-13 dígitos).
+    Lança ValueError se o resultado não puder ser normalizado.
+    """
+    if not valor:
+        return None
+    digitos = "".join(c for c in valor if c.isdigit())
+    if not digitos:
+        return None
+    if len(digitos) in (10, 11):
+        digitos = "55" + digitos
+    if len(digitos) not in (12, 13) or not digitos.startswith("55"):
+        raise ValueError(
+            "Número inválido. Informe DDD + número, ex: (11) 99999-9999."
+        )
+    return digitos
+
+
+def formatar_telefone(digitos: str) -> str:
+    """Formata dígitos de telefone armazenados para exibição: (DDD) NNNNN-NNNN."""
+    if not digitos:
+        return ""
+    local = digitos[2:] if digitos.startswith("55") and len(digitos) in (12, 13) else digitos
+    ddd = local[:2]
+    num = local[2:]
+    if len(num) == 9:
+        return f"({ddd}) {num[:5]}-{num[5:]}"
+    if len(num) == 8:
+        return f"({ddd}) {num[:4]}-{num[4:]}"
+    return digitos
+
+
 def apply_plotly_theme(fig) -> None:
     """Aplica paleta e estilo visual DFeB a uma figura Plotly recebida."""
     fig.update_layout(
@@ -429,3 +464,15 @@ def chart_title(title: str) -> None:
         f'<div class="dfeb-chart-card-title">{title}</div>',
         unsafe_allow_html=True,
     )
+
+
+def gerar_link_formulario(setor_id: int) -> str:
+    """Retorna a URL pública do formulário de solicitação pré-definido para um setor."""
+    from core.config import APP_BASE_URL
+    return f"{APP_BASE_URL}/solicitar?setor={setor_id}"
+
+
+def gerar_link_formulario_generico() -> str:
+    """Retorna a URL do formulário sem setor pré-definido (link manual)."""
+    from core.config import APP_BASE_URL
+    return f"{APP_BASE_URL}/solicitar"

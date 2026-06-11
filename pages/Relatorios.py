@@ -7,6 +7,8 @@ dados do banco.
 import calendar
 import datetime
 
+from core import tempo
+
 import streamlit as st
 import plotly.express as px
 
@@ -123,7 +125,7 @@ if tab_sel == "Consumo × Reposição":
         setor_m_sel = st.selectbox("Setor", list(setor_opcoes_m.keys()), key="mensal_setor")
         setor_m_id = setor_opcoes_m[setor_m_sel]
 
-    data_fim_m = datetime.date.today()
+    data_fim_m = tempo.hoje()
     data_inicio_m = data_fim_m - datetime.timedelta(days=periodo_mensal * 30)
 
     with SessionLocal() as session:
@@ -400,7 +402,7 @@ elif tab_sel == "Histórico de Movimentações":
         # Filtro por período (client-side)
         if periodo_hist is not None:
             import datetime as _dt
-            corte = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None) - _dt.timedelta(days=periodo_hist * 30)
+            corte = tempo.agora() - _dt.timedelta(days=periodo_hist * 30)
             try:
                 df_hist = df_hist[
                     df_hist["data"].apply(

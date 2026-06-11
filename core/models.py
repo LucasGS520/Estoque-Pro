@@ -13,6 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
+from core import tempo
 from core.database import Base
 
 # Tabela de junção para associação simples item ↔ fornecedor (sem preço/data).
@@ -32,7 +33,7 @@ class Categoria(Base):
     id = Column(Integer, primary_key=True)
     nome = Column(String(100), nullable=False, unique=True)
     descricao = Column(Text)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
 
     itens = relationship("Item", back_populates="categoria")
 
@@ -52,8 +53,8 @@ class Item(Base):
     estoque_ideal = Column(Integer, nullable=False, default=0)
     observacoes = Column(Text)
     ativo = Column(Boolean, default=True)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
-    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
+    atualizado_em = Column(DateTime, default=tempo.agora, onupdate=tempo.agora)
 
     # --- Camada automática de mínimo/ideal ---
     # Valores calculados pelo motor de revisão mensal (sempre atualizados)
@@ -79,6 +80,8 @@ class Item(Base):
     fornecedores_associados = relationship(
         "Fornecedor", secondary=item_fornecedores, order_by="Fornecedor.nome"
     )
+    solicitacoes = relationship("SolicitacaoMaterial", back_populates="item", cascade="all, delete-orphan")
+    itens_lista_compra = relationship("ItemListaCompra", back_populates="item", cascade="all, delete-orphan")
 
 
 class Fornecedor(Base):
@@ -93,7 +96,7 @@ class Fornecedor(Base):
     email = Column(String(100))
     preferencial = Column(Boolean, default=False)
     ativo = Column(Boolean, default=True)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
 
     precos = relationship("PrecoFornecedor", back_populates="fornecedor")
 
@@ -113,7 +116,7 @@ class PrecoFornecedor(Base):
     data_cotacao = Column(Date, nullable=False)
     validade_dias = Column(Integer, default=30)
     ativo = Column(Boolean, default=True)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
 
     item = relationship("Item", back_populates="precos")
     fornecedor = relationship("Fornecedor", back_populates="precos")
@@ -127,10 +130,12 @@ class Setor(Base):
     id = Column(Integer, primary_key=True)
     nome = Column(String(100), nullable=False, unique=True)
     descricao = Column(Text)
+    whatsapp = Column(String(50), nullable=True)
     ativo = Column(Boolean, default=True)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
 
     movimentacoes = relationship("Movimentacao", back_populates="setor")
+    pedidos = relationship("SolicitacaoPedido", back_populates="setor")
 
 
 class Movimentacao(Base):
@@ -148,7 +153,7 @@ class Movimentacao(Base):
     operador = Column(String(100))  # legado — mantido para compatibilidade com registros anteriores
     retirado_por = Column(String(200))
     setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
 
     item = relationship("Item", back_populates="movimentacoes")
     setor = relationship("Setor", back_populates="movimentacoes")
@@ -165,7 +170,7 @@ class SnapshotAnalise(Base):
     quantidade_recomendar = Column(Integer, nullable=False, default=0)
     valor_estimado = Column(Float)
     fornecedor_sugerido_id = Column(Integer, ForeignKey("fornecedores.id"))
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
 
     item = relationship("Item", back_populates="snapshots")
     fornecedor_sugerido = relationship("Fornecedor")
@@ -178,7 +183,7 @@ class RevisaoMensal(Base):
 
     id = Column(Integer, primary_key=True)
     item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)
     periodo_descricao = Column(String(50))          # ex: "Junho/2026"
     data_inicio_analise = Column(DateTime)
     data_fim_analise = Column(DateTime)
@@ -194,6 +199,148 @@ class RevisaoMensal(Base):
     item = relationship("Item", back_populates="revisoes_mensais")
 
 
+class CicloSolicitacaoMaterial(Base):
+    """Registro de um ciclo mensal de coleta de solicitações de materiais."""
+
+    __tablename__ = "ciclos_solicitacao_material"
+
+    id = Column(Integer, primary_key=True)
+    periodo_referencia = Column(Date, nullable=False)
+    abertura_em = Column(DateTime, nullable=False)
+    prazo_resposta_em = Column(DateTime, nullable=True)
+    encerrado_em = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="aberto")  # "aberto" | "encerrado"
+    criado_em = Column(DateTime, default=tempo.agora)
+
+    participantes = relationship("CicloSolicitacaoSetor", back_populates="ciclo")
+    pedidos = relationship("SolicitacaoPedido", back_populates="ciclo")
+
+
+class CicloSolicitacaoSetor(Base):
+    """Rastreia a participação de cada setor dentro de um ciclo de solicitações."""
+
+    __tablename__ = "ciclo_solicitacao_setores"
+
+    id = Column(Integer, primary_key=True)
+    ciclo_id = Column(Integer, ForeignKey("ciclos_solicitacao_material.id"), nullable=False)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=False)
+    status = Column(String(30), nullable=False, default="pendente")  # pendente | respondido | sem_solicitacao
+    respondido_em = Column(DateTime, nullable=True)
+    # Rastreamento de entrega da notificação inicial (abertura do ciclo)
+    envio_notificado_em = Column(DateTime, nullable=True)   # preenchido quando o envio foi bem-sucedido
+    falha_envio         = Column(Boolean, default=False)    # True se o último envio falhou
+    motivo_falha        = Column(String(200), nullable=True) # "sem_whatsapp" | "api_error:400" | etc.
+    # Rastreamento dos demais eventos de notificação (para evitar reenvios duplicados)
+    notificacao_lembrete_d2_em    = Column(DateTime, nullable=True)
+    notificacao_prazo_proximo_em  = Column(DateTime, nullable=True)
+    notificacao_encerramento_em   = Column(DateTime, nullable=True)
+    notificacao_feedback_em       = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("ciclo_id", "setor_id", name="uq_ciclo_setor"),)
+
+    ciclo = relationship("CicloSolicitacaoMaterial", back_populates="participantes")
+    setor = relationship("Setor")
+
+
+class SolicitacaoPedido(Base):
+    """Cabeçalho atômico de um formulário de solicitação — agrupa todos os itens de uma submissão."""
+
+    __tablename__ = "solicitacoes_pedido"
+
+    id = Column(Integer, primary_key=True)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    solicitante = Column(String(100), nullable=False)
+    periodo_referencia = Column(Date, nullable=False)
+    ciclo_id = Column(Integer, ForeignKey("ciclos_solicitacao_material.id"), nullable=True)
+    status = Column(String(30), nullable=False, default="enviado")
+    criado_em = Column(DateTime, default=tempo.agora)
+
+    setor = relationship("Setor", back_populates="pedidos")
+    itens = relationship("SolicitacaoMaterial", back_populates="pedido")
+    ciclo = relationship("CicloSolicitacaoMaterial", back_populates="pedidos")
+
+
+class SolicitacaoMaterial(Base):
+    """Pedido de compra registrado por um setor para um período de referência."""
+
+    __tablename__ = "solicitacoes_material"
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, ForeignKey("itens.id"), nullable=True)
+    nome_item_livre = Column(String(200), nullable=True)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    solicitante = Column(String(100), nullable=False)
+    quantidade_solicitada = Column(Integer, nullable=False)
+    observacao = Column(Text, nullable=True)
+    urgente = Column(Boolean, nullable=False, default=False)
+    periodo_referencia = Column(Date, nullable=False)
+    status = Column(String(30), nullable=False, default="pendente")
+    pedido_id = Column(Integer, ForeignKey("solicitacoes_pedido.id"), nullable=True)
+    criado_em = Column(DateTime, default=tempo.agora)
+
+    item = relationship("Item", back_populates="solicitacoes")
+    setor = relationship("Setor")
+    compras_avulsas = relationship("CompraAvulsa", back_populates="solicitacao", cascade="all, delete-orphan")
+    pedido = relationship("SolicitacaoPedido", back_populates="itens")
+
+
+class CompraAvulsa(Base):
+    """Item de compra pontual que não entra no cadastro principal de estoque."""
+
+    __tablename__ = "compras_avulsas"
+
+    id = Column(Integer, primary_key=True)
+    solicitacao_id = Column(Integer, ForeignKey("solicitacoes_material.id"), nullable=True)
+    periodo_referencia = Column(Date, nullable=False)
+    nome_item = Column(String(200), nullable=False)
+    unidade = Column(String(20), default="un")
+    quantidade = Column(Integer, nullable=False)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    solicitante = Column(String(100), nullable=False)
+    observacao = Column(Text, nullable=True)
+    urgente = Column(Boolean, default=False)
+    incluir_na_lista_final = Column(Boolean, default=True)
+    criado_em = Column(DateTime, default=tempo.agora)
+
+    solicitacao = relationship("SolicitacaoMaterial", back_populates="compras_avulsas")
+    setor = relationship("Setor")
+
+
+class ItemListaCompra(Base):
+    """Resultado consolidado de análise de compra por item e período.
+
+    Carrega os campos editáveis de governança (quantidade_final_definida, observacao)
+    e a flag de aprovação para envio ao Orçamentos. `motivo_sugestao` é gerado
+    automaticamente pelo engine para auditoria; `observacao` é preenchida pelo responsável.
+    """
+
+    __tablename__ = "itens_lista_compra"
+    __table_args__ = (
+        UniqueConstraint("item_id", "periodo_referencia", name="uq_item_lista_periodo"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
+    periodo_referencia = Column(Date, nullable=False)
+    status = Column(String(30), nullable=False)
+    estoque_atual_snap = Column(Integer, nullable=False, default=0)
+    estoque_minimo_snap = Column(Integer, nullable=False, default=0)
+    estoque_ideal_snap = Column(Integer, nullable=False, default=0)
+    total_solicitado = Column(Integer, nullable=False, default=0)
+    quantidade_sugerida = Column(Integer, nullable=False, default=0)
+    quantidade_final_definida = Column(Integer, nullable=True)
+    observacao = Column(Text, nullable=True)
+    motivo_sugestao = Column(Text, nullable=True)
+    incluir_na_lista_final = Column(Boolean, default=False)
+    valor_estimado = Column(Float, nullable=True)
+    fornecedor_sugerido_id = Column(Integer, ForeignKey("fornecedores.id"), nullable=True)
+    criado_em = Column(DateTime, default=tempo.agora)
+    atualizado_em = Column(DateTime, default=tempo.agora, onupdate=tempo.agora)
+
+    item = relationship("Item", back_populates="itens_lista_compra")
+    fornecedor_sugerido = relationship("Fornecedor")
+
+
 class Importacao(Base):
     """Log de uma execução de importação de planilhas externas."""
 
@@ -206,4 +353,4 @@ class Importacao(Base):
     linhas_ok = Column(Integer)
     linhas_erro = Column(Integer)
     erros_json = Column(Text)
-    criado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    criado_em = Column(DateTime, default=tempo.agora)

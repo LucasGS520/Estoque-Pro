@@ -6,12 +6,24 @@ funções de consulta apenas leem dados.
 """
 
 import datetime
+
+from core import tempo
 import unicodedata
 from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from core.models import Categoria, Fornecedor, Item, Movimentacao, Setor
+from core.models import (
+    Categoria,
+    CicloSolicitacaoMaterial,
+    CicloSolicitacaoSetor,
+    Fornecedor,
+    Item,
+    Movimentacao,
+    Setor,
+    SolicitacaoMaterial,
+)
+from core.ui import limpar_telefone
 
 
 def _normalizar(texto: str) -> str:
@@ -66,7 +78,7 @@ def update_limites(
         item.unidade = unidade
     if observacoes is not None:
         item.observacoes = observacoes
-    item.atualizado_em = datetime.datetime.utcnow()
+    item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
     return item
@@ -121,7 +133,7 @@ def registrar_movimentacao(
     session.add(mov)
 
     item.estoque_atual = nova_qtd
-    item.atualizado_em = datetime.datetime.utcnow()
+    item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
     return item
@@ -276,7 +288,7 @@ def create_item(
     if duplicado:
         raise ValueError(f"Já existe um item com o nome '{nome}' nessa categoria")
 
-    agora = datetime.datetime.utcnow()
+    agora = tempo.agora()
     tem_manual_min = estoque_minimo_manual is not None and estoque_minimo_manual > 0
     tem_manual_ideal = estoque_ideal_manual is not None and estoque_ideal_manual > 0
 
@@ -347,7 +359,7 @@ def update_item_completo(
     item.unidade = unidade
     item.observacoes = observacoes
     item.ativo = ativo
-    item.atualizado_em = datetime.datetime.utcnow()
+    item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
     return item
@@ -398,27 +410,51 @@ def update_categoria(
     return cat
 
 
+_STATUS_SOLICITACAO_ATIVOS = {"pendente", "validada", "novo_item", "sem_parametros"}
+
+
+def _verificar_solicitacoes_ativas(session: Session, item_id: int) -> None:
+    """Lança ValueError se o item tiver solicitações pendentes de revisão."""
+    n = (
+        session.query(SolicitacaoMaterial)
+        .filter(
+            SolicitacaoMaterial.item_id == item_id,
+            SolicitacaoMaterial.status.in_(_STATUS_SOLICITACAO_ATIVOS),
+        )
+        .count()
+    )
+    if n > 0:
+        raise ValueError(
+            f"Este item possui {n} solicitação(ões) pendente(s) de revisão. "
+            "Resolva ou rejeite as solicitações antes de remover o item."
+        )
+
+
 def delete_item(session: Session, item_id: int) -> None:
     """Remove permanentemente um item e registros dependentes em cascade."""
     item = session.query(Item).filter_by(id=item_id).first()
     if not item:
         raise ValueError(f"Item {item_id} não encontrado")
+    _verificar_solicitacoes_ativas(session, item_id)
     session.delete(item)
     session.commit()
 
 
+def count_itens_categoria(session: Session, cat_id: int) -> int:
+    return session.query(Item).filter_by(categoria_id=cat_id).count()
+
+
 def delete_categoria(session: Session, cat_id: int) -> None:
-    """Remove uma categoria somente quando ela não possui itens vinculados."""
+    """Remove uma categoria e todos os itens vinculados a ela (cascade)."""
     cat = session.query(Categoria).filter_by(id=cat_id).first()
     if not cat:
         raise ValueError(f"Categoria {cat_id} não encontrada")
 
-    tem_itens = session.query(Item).filter_by(categoria_id=cat_id).first()
-    if tem_itens:
-        raise ValueError(
-            "Não é possível remover uma categoria que possui itens. "
-            "Remova ou mova os itens antes de excluir a categoria."
-        )
+    itens = session.query(Item).filter_by(categoria_id=cat_id).all()
+    for item in itens:
+        _verificar_solicitacoes_ativas(session, item.id)
+    for item in itens:
+        session.delete(item)
 
     session.delete(cat)
     session.commit()
@@ -440,6 +476,7 @@ def criar_setor(
     session: Session,
     nome: str,
     descricao: Optional[str] = None,
+    whatsapp: Optional[str] = None,
 ) -> Setor:
     """Cria um setor validando unicidade do nome (case-insensitive)."""
     nome_norm = _normalizar(nome)
@@ -448,7 +485,7 @@ def criar_setor(
         if _normalizar(s.nome) == nome_norm:
             raise ValueError(f"Já existe um setor com o nome '{nome}'")
 
-    setor = Setor(nome=nome.strip(), descricao=descricao)
+    setor = Setor(nome=nome.strip(), descricao=descricao, whatsapp=limpar_telefone(whatsapp))
     session.add(setor)
     session.commit()
     session.refresh(setor)
@@ -461,8 +498,9 @@ def atualizar_setor(
     nome: str,
     descricao: Optional[str] = None,
     ativo: bool = True,
+    whatsapp: Optional[str] = None,
 ) -> Setor:
-    """Atualiza nome, descrição e status de atividade de um setor existente."""
+    """Atualiza nome, descrição, WhatsApp e status de atividade de um setor existente."""
     setor = session.query(Setor).filter_by(id=setor_id).first()
     if not setor:
         raise ValueError(f"Setor {setor_id} não encontrado")
@@ -476,8 +514,27 @@ def atualizar_setor(
     setor.nome = nome.strip()
     setor.descricao = descricao
     setor.ativo = ativo
+    setor.whatsapp = limpar_telefone(whatsapp)
     session.commit()
     session.refresh(setor)
+
+    if not ativo:
+        participacoes = (
+            session.query(CicloSolicitacaoSetor)
+            .join(CicloSolicitacaoMaterial)
+            .filter(
+                CicloSolicitacaoSetor.setor_id == setor_id,
+                CicloSolicitacaoSetor.status == "pendente",
+                CicloSolicitacaoMaterial.status == "aberto",
+            )
+            .all()
+        )
+        for p in participacoes:
+            p.status = "sem_solicitacao"
+            p.respondido_em = tempo.agora()
+        if participacoes:
+            session.commit()
+
     return setor
 
 
@@ -487,6 +544,22 @@ def delete_setor(session: Session, setor_id: int, force: bool = False) -> int:
     setor = session.get(Setor, setor_id)
     if not setor:
         raise ValueError(f"Setor {setor_id} não encontrado")
+
+    ciclos_ativos = (
+        session.query(CicloSolicitacaoSetor)
+        .join(CicloSolicitacaoMaterial)
+        .filter(
+            CicloSolicitacaoSetor.setor_id == setor_id,
+            CicloSolicitacaoMaterial.status == "aberto",
+        )
+        .count()
+    )
+    if ciclos_ativos > 0:
+        raise ValueError(
+            "Este setor está participando de um ciclo de solicitações em aberto. "
+            "Encerre o ciclo ou desative o setor antes de removê-lo."
+        )
+
     mov_count = len(setor.movimentacoes)
     if mov_count > 0 and not force:
         raise ValueError(

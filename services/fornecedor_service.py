@@ -6,6 +6,8 @@ criam, atualizam, excluem ou adicionam preço persistem as alterações com
 """
 
 import datetime
+
+from core import tempo
 from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
@@ -60,7 +62,7 @@ def get_best_price(session: Session, item_id: int) -> Optional[PrecoFornecedor]:
     validade. Se houver fornecedor preferencial válido, ele tem prioridade; em
     seguida vence o menor preço.
     """
-    hoje = datetime.date.today()
+    hoje = tempo.hoje()
     precos = (
         session.query(PrecoFornecedor)
         .options(joinedload(PrecoFornecedor.fornecedor))
@@ -84,6 +86,46 @@ def get_best_price(session: Session, item_id: int) -> Optional[PrecoFornecedor]:
     preferenciais = [p for p in validos if p.fornecedor.preferencial]
     candidatos = preferenciais if preferenciais else validos
     return min(candidatos, key=lambda p: p.preco_unitario)
+
+
+def get_best_prices_bulk(
+    session: Session, item_ids: list[int]
+) -> dict[int, Optional[PrecoFornecedor]]:
+    """Retorna o melhor preço para cada item em uma única query (sem N+1).
+
+    Mesma regra de get_best_price(): preferencial=True tem prioridade;
+    fallback para menor preço válido entre cotações ativas e dentro do prazo.
+    """
+    if not item_ids:
+        return {}
+
+    hoje = tempo.hoje()
+    precos = (
+        session.query(PrecoFornecedor)
+        .options(joinedload(PrecoFornecedor.fornecedor))
+        .filter(
+            PrecoFornecedor.item_id.in_(item_ids),
+            PrecoFornecedor.ativo == True,  # noqa: E712
+        )
+        .all()
+    )
+
+    por_item: dict[int, list[PrecoFornecedor]] = {}
+    for p in precos:
+        if (
+            p.fornecedor
+            and p.fornecedor.ativo
+            and (p.data_cotacao + datetime.timedelta(days=p.validade_dias)) >= hoje
+        ):
+            por_item.setdefault(p.item_id, []).append(p)
+
+    resultado: dict[int, Optional[PrecoFornecedor]] = {i: None for i in item_ids}
+    for item_id, lista in por_item.items():
+        preferenciais = [p for p in lista if p.fornecedor.preferencial]
+        candidatos = preferenciais if preferenciais else lista
+        resultado[item_id] = min(candidatos, key=lambda p: p.preco_unitario)
+
+    return resultado
 
 
 def get_precos_por_item(session: Session, item_id: int) -> list[PrecoFornecedor]:
