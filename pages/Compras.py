@@ -1420,7 +1420,7 @@ elif aba == "Consolidação":
                     key="consolidacao_editor",
                 )
 
-            if not _consolidacao_readonly and st.button("💾 Salvar Alterações", type="primary", key="salvar_consolidacao"):
+            if not _consolidacao_readonly and st.button("Salvar Alterações", type="primary", key="salvar_consolidacao"):
                 # Valida antes de persistir: Qtd Final é obrigatória e >= 1 para
                 # itens marcados na lista e para toda compra avulsa. Nada é salvo
                 # enquanto houver valor inválido.
@@ -1549,7 +1549,7 @@ elif aba == "Consolidação":
         with open(caminho_docx, "rb") as f:
             docx_bytes = f.read()
         st.download_button(
-            "📄 Baixar Lista de Compras (DOCX)",
+            "Baixar Lista de Compras (DOCX)",
             data=docx_bytes,
             file_name=f"lista_compras_{periodo_label}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
