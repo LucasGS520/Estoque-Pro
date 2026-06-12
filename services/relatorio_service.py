@@ -39,13 +39,25 @@ def consumo_por_mes(session: Session, item_id: Optional[int] = None) -> pd.DataF
     return df.sort_values("mes")
 
 
-def consumo_por_categoria(session: Session, meses: Optional[int] = None) -> pd.DataFrame:
+def consumo_por_categoria(
+    session: Session,
+    meses: Optional[int] = None,
+    data_inicio: Optional[datetime.date] = None,
+    data_fim: Optional[datetime.date] = None,
+) -> pd.DataFrame:
     """Agrupa a quantidade consumida por categoria de item.
 
-    `meses=None` soma todo o histórico; qualquer inteiro restringe aos últimos N meses.
+    Prioriza `data_inicio`/`data_fim` quando fornecidos; caso contrário usa `meses`
+    (None = todo o histórico).
     """
     q = session.query(Movimentacao).filter(Movimentacao.tipo == "saida")
-    if meses is not None:
+    if data_inicio is not None or data_fim is not None:
+        dt_ini, dt_fim = _dt_range(
+            data_inicio or tempo.hoje().replace(day=1),
+            data_fim or tempo.hoje(),
+        )
+        q = q.filter(Movimentacao.criado_em >= dt_ini, Movimentacao.criado_em <= dt_fim)
+    elif meses is not None:
         desde = tempo.agora() - datetime.timedelta(days=meses * 30)
         q = q.filter(Movimentacao.criado_em >= desde)
     movs = q.all()
@@ -78,6 +90,8 @@ def historico_movimentacoes(
     item_id: Optional[int] = None,
     tipo: Optional[str] = None,
     limit: int = 200,
+    data_inicio: Optional[datetime.date] = None,
+    data_fim: Optional[datetime.date] = None,
 ) -> pd.DataFrame:
     """Retorna as movimentações mais recentes em formato tabular.
 
@@ -89,6 +103,12 @@ def historico_movimentacoes(
         q = q.filter(Movimentacao.item_id == item_id)
     if tipo:
         q = q.filter(Movimentacao.tipo == tipo)
+    if data_inicio is not None or data_fim is not None:
+        dt_ini, dt_fim = _dt_range(
+            data_inicio or tempo.hoje().replace(day=1),
+            data_fim or tempo.hoje(),
+        )
+        q = q.filter(Movimentacao.criado_em >= dt_ini, Movimentacao.criado_em <= dt_fim)
     movs = q.order_by(Movimentacao.criado_em.desc()).limit(limit).all()
 
     _COLS_HIST = ["data", "item_id", "tipo", "setor", "quantidade", "qtd_anterior", "qtd_nova", "motivo", "retirado_por"]
@@ -112,13 +132,26 @@ def historico_movimentacoes(
     return pd.DataFrame(rows)
 
 
-def consumo_por_setor(session: Session, meses: int = 6) -> pd.DataFrame:
-    """Agrega total de saídas por setor nos últimos N meses."""
-    desde = tempo.agora() - datetime.timedelta(days=meses * 30)
+def consumo_por_setor(
+    session: Session,
+    meses: int = 6,
+    data_inicio: Optional[datetime.date] = None,
+    data_fim: Optional[datetime.date] = None,
+) -> pd.DataFrame:
+    """Agrega total de saídas por setor. Usa data_inicio/data_fim quando fornecidos."""
+    if data_inicio is not None or data_fim is not None:
+        dt_ini, dt_fim = _dt_range(
+            data_inicio or tempo.hoje().replace(day=1),
+            data_fim or tempo.hoje(),
+        )
+        filtro_dt = [Movimentacao.criado_em >= dt_ini, Movimentacao.criado_em <= dt_fim]
+    else:
+        desde = tempo.agora() - datetime.timedelta(days=meses * 30)
+        filtro_dt = [Movimentacao.criado_em >= desde]
     movs = (
         session.query(Movimentacao)
         .options(joinedload(Movimentacao.setor))
-        .filter(Movimentacao.tipo == "saida", Movimentacao.criado_em >= desde)
+        .filter(Movimentacao.tipo == "saida", *filtro_dt)
         .all()
     )
 
@@ -145,19 +178,26 @@ def consumo_por_item(
     session: Session,
     setor_id: Optional[int] = None,
     meses: int = 6,
+    data_inicio: Optional[datetime.date] = None,
+    data_fim: Optional[datetime.date] = None,
 ) -> pd.DataFrame:
-    """Agrega total de saídas por item (e setor) nos últimos N meses.
-
-    Quando `setor_id` é informado, filtra apenas as saídas daquele setor.
-    """
-    desde = tempo.agora() - datetime.timedelta(days=meses * 30)
+    """Agrega total de saídas por item (e setor). Usa data_inicio/data_fim quando fornecidos."""
+    if data_inicio is not None or data_fim is not None:
+        dt_ini, dt_fim = _dt_range(
+            data_inicio or tempo.hoje().replace(day=1),
+            data_fim or tempo.hoje(),
+        )
+        filtro_dt = [Movimentacao.criado_em >= dt_ini, Movimentacao.criado_em <= dt_fim]
+    else:
+        desde = tempo.agora() - datetime.timedelta(days=meses * 30)
+        filtro_dt = [Movimentacao.criado_em >= desde]
     q = (
         session.query(Movimentacao)
         .options(
             joinedload(Movimentacao.setor),
             joinedload(Movimentacao.item).joinedload(Item.categoria),
         )
-        .filter(Movimentacao.tipo == "saida", Movimentacao.criado_em >= desde)
+        .filter(Movimentacao.tipo == "saida", *filtro_dt)
     )
     if setor_id is not None:
         q = q.filter(Movimentacao.setor_id == setor_id)

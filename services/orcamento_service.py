@@ -13,12 +13,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_, func
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from core import tempo
 from core.models import (
     CotacaoOrcamento,
+    Fornecedor,
     ItemListaCompra,
     ItemOrcamento,
     Orcamento,
@@ -212,10 +213,16 @@ def criar_orcamento(
         )
 
     numero = _gerar_numero(session, periodo)
+    _ultima_versao = (
+        session.query(func.max(Orcamento.versao))
+        .filter(Orcamento.periodo_referencia == periodo)
+        .scalar() or 0
+    )
+
     orc = Orcamento(
         periodo_referencia=periodo,
         numero=numero,
-        versao=1,
+        versao=_ultima_versao + 1,
         status="RASCUNHO",
         responsavel=responsavel,
     )
@@ -289,6 +296,19 @@ def _verificar_editavel(orc: Orcamento):
         )
 
 
+def _atualizar_melhor_cotacao(session: Session, item_orc_id: int) -> None:
+    """Define cotacao_escolhida_id como a cotação de menor total_calculado."""
+    cotacoes = (
+        session.query(CotacaoOrcamento)
+        .filter(CotacaoOrcamento.item_orcamento_id == item_orc_id)
+        .all()
+    )
+    item = session.get(ItemOrcamento, item_orc_id)
+    if item is None:
+        return
+    item.cotacao_escolhida_id = min(cotacoes, key=lambda c: c.total_calculado).id if cotacoes else None
+
+
 def add_cotacao(
     session: Session,
     item_orc_id: int,
@@ -335,6 +355,8 @@ def add_cotacao(
         orc.status = "EM_COTACAO"
         orc.atualizado_em = tempo.agora()
 
+    session.flush()
+    _atualizar_melhor_cotacao(session, item_orc_id)
     session.commit()
     session.refresh(cotacao)
     return cotacao
@@ -384,6 +406,7 @@ def editar_cotacao(
         cot.desconto,
         cot.outros_custos,
     )
+    _atualizar_melhor_cotacao(session, cot.item_orcamento_id)
     session.commit()
     session.refresh(cot)
     return cot
@@ -398,13 +421,10 @@ def remover_cotacao(session: Session, cotacao_id: int) -> None:
     orc = session.get(Orcamento, item.orcamento_id)
     _verificar_editavel(orc)
 
-    if item.cotacao_escolhida_id == cotacao_id:
-        item.cotacao_escolhida_id = None
-
     session.delete(cot)
     session.flush()
 
-    # Reavalia status do item
+    # Reavalia status e melhor cotação
     restantes = (
         session.query(CotacaoOrcamento)
         .filter(CotacaoOrcamento.item_orcamento_id == item.id)
@@ -412,8 +432,10 @@ def remover_cotacao(session: Session, cotacao_id: int) -> None:
     )
     if restantes == 0:
         item.status_item = "SEM_COTACAO"
-    elif item.cotacao_escolhida_id is None:
+        item.cotacao_escolhida_id = None
+    else:
         item.status_item = "COM_COTACAO"
+        _atualizar_melhor_cotacao(session, item.id)
 
     session.commit()
 
@@ -474,6 +496,7 @@ def atualizar_quantidade_orcada(
             nova_quantidade, cot.preco_unitario, cot.frete, cot.desconto, cot.outros_custos
         )
 
+    _atualizar_melhor_cotacao(session, item_orc_id)
     session.commit()
     session.refresh(item)
     return item
@@ -557,14 +580,11 @@ def enviar_para_aprovacao(session: Session, orcamento_id: int) -> Orcamento:
         .all()
     )
 
-    pendentes = [
-        i.nome_item for i in itens
-        if i.status_item in ("SEM_COTACAO", "COM_COTACAO") and i.cotacao_escolhida_id is None
-    ]
+    pendentes = [i.nome_item for i in itens if i.status_item == "SEM_COTACAO"]
     if pendentes:
         lista = ", ".join(pendentes[:5])
         raise ValueError(
-            f"Os seguintes itens precisam ter uma cotação escolhida antes do envio: {lista}."
+            f"Os seguintes itens ainda não possuem cotações registradas: {lista}."
         )
 
     orc.status = "ENVIADO_APROVACAO"
@@ -718,3 +738,116 @@ def get_itens_aprovados(session: Session, orcamento_id: int) -> list[ItemOrcamen
         )
         .all()
     )
+
+
+def sincronizar_com_lista_final(session: Session, orc_id: int) -> dict:
+    """Sincroniza ItemOrcamento com o estado atual da Lista Final.
+
+    Compara os itens do orçamento com a Lista Final vigente e:
+    - Adiciona itens novos (presentes na lista, ausentes no orçamento)
+    - Remove itens excluídos (presentes no orçamento, ausentes na lista) junto
+      com suas CotacaoOrcamento filhas
+    - Atualiza quantidade_lista quando houver divergência
+
+    Retorna {"adicionados": n, "removidos": n, "atualizados": n}.
+    No-op se o orçamento não estiver em RASCUNHO ou EM_COTACAO.
+    """
+    orc = session.get(Orcamento, orc_id)
+    if orc is None or orc.status not in ("RASCUNHO", "EM_COTACAO"):
+        return {"adicionados": 0, "removidos": 0, "atualizados": 0}
+
+    lista = get_lista_final_para_orcamento(session, orc.periodo_referencia)
+    ids_lista_estoque = {il.id for il in lista["itens_estoque"]}
+    ids_lista_avulso = {ca.id for ca in lista["itens_avulsos"]}
+
+    itens_orc = session.query(ItemOrcamento).filter_by(orcamento_id=orc_id).all()
+    orc_por_lista = {io.item_lista_id: io for io in itens_orc if io.tipo == "ESTOQUE" and io.item_lista_id}
+    orc_por_avulso = {io.compra_avulsa_id: io for io in itens_orc if io.tipo == "AVULSA" and io.compra_avulsa_id}
+
+    adicionados = removidos = atualizados = 0
+
+    # Removidos — estão no orçamento mas não mais na Lista Final
+    for io in itens_orc:
+        excluir = (
+            (io.tipo == "ESTOQUE" and io.item_lista_id not in ids_lista_estoque) or
+            (io.tipo == "AVULSA" and io.compra_avulsa_id not in ids_lista_avulso)
+        )
+        if excluir:
+            io.cotacao_escolhida_id = None
+            session.flush()
+            session.query(CotacaoOrcamento).filter_by(item_orcamento_id=io.id).delete()
+            session.delete(io)
+            removidos += 1
+
+    session.flush()
+
+    # Novos e atualizados — estoque
+    for il in lista["itens_estoque"]:
+        qtd = il.quantidade_final_definida or il.quantidade_sugerida or 1
+        if il.id not in orc_por_lista:
+            cat = il.item.categoria.nome if il.item and il.item.categoria else ""
+            session.add(ItemOrcamento(
+                orcamento_id=orc_id,
+                item_lista_id=il.id,
+                nome_item=il.item.nome if il.item else f"Item #{il.item_id}",
+                categoria_nome=cat,
+                tipo="ESTOQUE",
+                quantidade_lista=qtd,
+                quantidade_orcada=qtd,
+                status_item="SEM_COTACAO",
+            ))
+            adicionados += 1
+        else:
+            io = orc_por_lista[il.id]
+            if io.quantidade_lista != qtd:
+                io.quantidade_lista = qtd
+                atualizados += 1
+
+    # Novos e atualizados — avulsos
+    for ca in lista["itens_avulsos"]:
+        if ca.id not in orc_por_avulso:
+            session.add(ItemOrcamento(
+                orcamento_id=orc_id,
+                compra_avulsa_id=ca.id,
+                nome_item=ca.nome_item,
+                categoria_nome="Compra Avulsa",
+                tipo="AVULSA",
+                quantidade_lista=ca.quantidade,
+                quantidade_orcada=ca.quantidade,
+                status_item="SEM_COTACAO",
+            ))
+            adicionados += 1
+        else:
+            io = orc_por_avulso[ca.id]
+            if io.quantidade_lista != ca.quantidade:
+                io.quantidade_lista = ca.quantidade
+                atualizados += 1
+
+    if adicionados or removidos or atualizados:
+        orc.atualizado_em = tempo.agora()
+        session.commit()
+
+    return {"adicionados": adicionados, "removidos": removidos, "atualizados": atualizados}
+
+
+def get_fornecedores_para_item_orcamento(
+    session: Session, item_orc_id: int
+) -> list[Fornecedor]:
+    """Retorna fornecedores vinculados ao item de estoque do ItemOrcamento.
+
+    Segue a cadeia: ItemOrcamento → ItemListaCompra → Item → fornecedores_associados.
+    Retorna [] para CompraAvulsa (tipo AVULSA) pois não há associação prévia.
+    """
+    item = session.query(ItemOrcamento).filter_by(id=item_orc_id).first()
+    if not item or item.tipo == "AVULSA" or not item.item_lista_id:
+        return []
+    lista = session.query(ItemListaCompra).filter_by(id=item.item_lista_id).first()
+    if not lista or not lista.item_id:
+        return []
+    estoque_item = (
+        session.query(Item)
+        .options(selectinload(Item.fornecedores_associados))
+        .filter_by(id=lista.item_id)
+        .first()
+    )
+    return list(estoque_item.fornecedores_associados) if estoque_item else []

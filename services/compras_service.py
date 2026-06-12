@@ -306,9 +306,8 @@ def rejeitar_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
 
 
 def revertir_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
-    """Reverte uma solicitação aprovada ou rejeitada de volta para 'validada'.
-
-    Permite desfazer uma aprovação ou rejeição antes da consolidação ser executada.
+    """Reverte uma solicitação aprovada ou rejeitada, re-avaliando o status com base no
+    estado ATUAL do item (parâmetros podem ter mudado desde a triagem original).
     """
     sol = session.get(SolicitacaoMaterial, sol_id)
     if sol is None:
@@ -318,7 +317,13 @@ def revertir_solicitacao(session: Session, sol_id: int) -> SolicitacaoMaterial:
             f"Só é possível reverter solicitações com status 'aprovada' ou 'rejeitada'. "
             f"Status atual: '{sol.status}'"
         )
-    sol.status = "validada"
+    if sol.item_id is None:
+        sol.status = "novo_item"
+    else:
+        item = session.get(Item, sol.item_id)
+        tem_minimo = item is not None and (item.estoque_minimo_vigente or 0) > 0
+        tem_ideal  = item is not None and (item.estoque_ideal_vigente or 0) > 0
+        sol.status = "validada" if (tem_minimo and tem_ideal) else "sem_parametros"
     session.commit()
     session.refresh(sol)
     return sol
@@ -835,3 +840,32 @@ def get_periodos_com_consolidacao(session: Session) -> list[datetime.date]:
         .all()
     )
     return [r[0] for r in rows]
+
+
+def get_periodos_com_atividade(session: Session) -> list[datetime.date]:
+    """Retorna períodos com consolidação ou solicitações registradas, mais o mês atual."""
+    rows1 = session.query(ItemListaCompra.periodo_referencia).distinct().all()
+    rows2 = session.query(SolicitacaoPedido.periodo_referencia).distinct().all()
+    periodos: set[datetime.date] = {r[0] for r in rows1 + rows2 if r[0] is not None}
+    periodos.add(tempo.hoje().replace(day=1))
+    return sorted(periodos, reverse=True)
+
+
+def resetar_quantidades_consolidacao(session: Session, periodo: datetime.date) -> int:
+    """Zera as quantidades finais definidas manualmente na consolidação do período.
+
+    Retorna o número de itens resetados.
+    """
+    itens = (
+        session.query(ItemListaCompra)
+        .filter(
+            ItemListaCompra.periodo_referencia == periodo,
+            ItemListaCompra.quantidade_final_definida.isnot(None),
+        )
+        .all()
+    )
+    for item in itens:
+        item.quantidade_final_definida = None
+        item.incluir_na_lista_final = False
+    session.commit()
+    return len(itens)

@@ -191,6 +191,12 @@ def delete_fornecedor(session: Session, forn_id: int) -> None:
         {"fornecedor_sugerido_id": None}
     )
 
+    # Nulifica FK em cotações de orçamento (preserva o campo origem/texto)
+    from core.models import CotacaoOrcamento
+    session.query(CotacaoOrcamento).filter_by(fornecedor_id=forn_id).update(
+        {"fornecedor_id": None}
+    )
+
     session.delete(forn)
     session.commit()
 

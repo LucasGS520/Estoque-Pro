@@ -40,9 +40,11 @@ from services.compras_service import (
     get_consolidacao_periodo,
     get_lista_final,
     get_painel_reposicao,
+    get_periodos_com_atividade,
     get_periodos_com_consolidacao,
     listar_solicitacoes,
     remover_da_lista,
+    resetar_quantidades_consolidacao,
     vincular_item_existente,
 )
 from documents.lista_compras import gerar_lista_compras
@@ -278,30 +280,35 @@ _STATUS_LABEL = {
 section_title("Período de Referência")
 
 hoje = tempo.hoje()
-anos_disponiveis = list(range(hoje.year - 2, hoje.year + 2))
+_MESES_PT_LISTA = [
+    "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
 
-col_mes, col_ano, col_btn = st.columns([2, 1, 2])
-with col_mes:
-    mes_sel = st.selectbox(
-        "Mês",
-        options=list(MESES_PT.keys()),
-        format_func=lambda m: MESES_PT[m],
-        index=hoje.month - 1,
-        key="sel_mes",
+with SessionLocal() as _s_per:
+    _periodos_atividade = get_periodos_com_atividade(_s_per)
+
+_periodo_opcoes     = {f"{_MESES_PT_LISTA[p.month]}/{p.year}": p for p in _periodos_atividade}
+_periodo_atual_ref  = datetime.date(hoje.year, hoje.month, 1)
+_periodo_atual_label = f"{_MESES_PT_LISTA[_periodo_atual_ref.month]}/{_periodo_atual_ref.year}"
+_default_idx        = (
+    list(_periodo_opcoes.keys()).index(_periodo_atual_label)
+    if _periodo_atual_label in _periodo_opcoes else 0
+)
+
+col_per, col_btn = st.columns([3, 2])
+with col_per:
+    _periodo_label_sel = st.selectbox(
+        "Período",
+        list(_periodo_opcoes.keys()),
+        index=_default_idx,
+        key="sel_periodo",
         label_visibility="collapsed",
     )
-with col_ano:
-    ano_sel = st.selectbox(
-        "Ano",
-        options=anos_disponiveis,
-        index=anos_disponiveis.index(hoje.year),
-        key="sel_ano",
-        label_visibility="collapsed",
-    )
-periodo           = datetime.date(ano_sel, mes_sel, 1)
-periodo_label     = f"{MESES_PT[mes_sel]}/{ano_sel}"
-_periodo_atual_ref = datetime.date(hoje.year, hoje.month, 1)
-_periodo_tipo     = (
+
+periodo       = _periodo_opcoes[_periodo_label_sel]
+periodo_label = _periodo_label_sel
+_periodo_tipo = (
     "futuro"  if periodo > _periodo_atual_ref else
     "passado" if periodo < _periodo_atual_ref else
     "atual"
@@ -328,12 +335,12 @@ with SessionLocal() as _s:
     cats = get_categorias(_s)
     cat_nomes = ["Todas"] + sorted({r.categoria for r in painel_lista if r.categoria})
 
-_ultimo_dia    = calendar.monthrange(ano_sel, mes_sel)[1]
-_janela_inicio = f"01/{mes_sel:02d}/{ano_sel}"
+_ultimo_dia    = calendar.monthrange(periodo.year, periodo.month)[1]
+_janela_inicio = f"01/{periodo.month:02d}/{periodo.year}"
 _janela_fim    = (
     f"hoje ({hoje.strftime('%d/%m/%Y')})"
     if _periodo_tipo == "atual"
-    else f"{_ultimo_dia:02d}/{mes_sel:02d}/{ano_sel}"
+    else f"{_ultimo_dia:02d}/{periodo.month:02d}/{periodo.year}"
 )
 
 if _periodo_tipo == "futuro":
@@ -1390,6 +1397,8 @@ elif aba == "Consolidação":
                 "Incluir na Lista":    st.column_config.CheckboxColumn("Incluir na Lista"),
                 "Motivo do Sistema":   st.column_config.TextColumn("Motivo do Sistema", disabled=True, width="large"),
             }
+            _tem_qtd_manual = any(x.quantidade_final_definida is not None for x in itens_lista)
+
             if _consolidacao_readonly:
                 st.dataframe(
                     df_ed,
@@ -1399,13 +1408,21 @@ elif aba == "Consolidação":
                     use_container_width=True,
                 )
             else:
-                _col_btn1, _col_btn2, _ = st.columns([1, 1.2, 10.6])
+                _col_btn1, _col_btn2, _col_btn3, _ = st.columns([1, 1.2, 1.5, 7.6])
                 with _col_btn1:
                     if st.button("☑ Marcar Todos", key="btn_sel_tudo"):
                         st.session_state["consolidacao_sel_tudo"] = True
                 with _col_btn2:
                     if st.button("☐ Desmarcar Todos", key="btn_limpar_sel"):
                         st.session_state["consolidacao_sel_tudo"] = False
+                with _col_btn3:
+                    if st.button(
+                        "↺ Resetar Qtd",
+                        key="btn_resetar_qtd",
+                        disabled=not _tem_qtd_manual,
+                        help="Reverte todas as Qtd Final editadas manualmente para a Qtd Sugerida.",
+                    ):
+                        st.session_state["consolidacao_confirmar_reset"] = True
 
                 _sel_override = st.session_state.get("consolidacao_sel_tudo")
                 if _sel_override is not None:
@@ -1419,6 +1436,25 @@ elif aba == "Consolidação":
                     use_container_width=True,
                     key="consolidacao_editor",
                 )
+
+                if st.session_state.get("consolidacao_confirmar_reset"):
+                    st.warning(
+                        "⚠️ Isso irá reverter **todas as Qtd Final editadas** para a Qtd Sugerida "
+                        "e remover os itens da Lista Final. Confirma?",
+                    )
+                    _col_conf, _col_canc, _ = st.columns([1, 1, 8])
+                    with _col_conf:
+                        if st.button("Confirmar", type="primary", key="btn_confirmar_reset"):
+                            with SessionLocal() as _s_reset:
+                                _n_reset = resetar_quantidades_consolidacao(_s_reset, periodo)
+                            st.session_state.pop("consolidacao_confirmar_reset", None)
+                            st.session_state.pop("consolidacao_sel_tudo", None)
+                            st.success(f"{_n_reset} item(ns) resetado(s) para a quantidade sugerida.")
+                            st.rerun()
+                    with _col_canc:
+                        if st.button("Cancelar", key="btn_cancelar_reset"):
+                            st.session_state.pop("consolidacao_confirmar_reset", None)
+                            st.rerun()
 
             if not _consolidacao_readonly and st.button("Salvar Alterações", type="primary", key="salvar_consolidacao"):
                 # Valida antes de persistir: Qtd Final é obrigatória e >= 1 para

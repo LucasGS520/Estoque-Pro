@@ -99,20 +99,22 @@ c3.markdown(f"**Status:** {status_str}")
 
 st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-# ── Resumo financeiro ─────────────────────────────────────────────────────────
-itens_com_escolha = [i for i in orc.itens if i.cotacao_escolhida_id is not None]
+# ── Resumo financeiro (baseado no menor preço por item) ──────────────────────
+import pandas as pd
+
 total_bruto = 0.0
 frete_total = 0.0
 total_geral = 0.0
 origens: set[str] = set()
 
-for item in itens_com_escolha:
-    cot = next((c for c in item.cotacoes if c.id == item.cotacao_escolhida_id), None)
-    if cot:
-        total_bruto += item.quantidade_orcada * cot.preco_unitario - cot.desconto + cot.outros_custos
-        frete_total += cot.frete
-        total_geral += cot.total_calculado
-        origens.add(cot.origem)
+for item in orc.itens:
+    if not item.cotacoes:
+        continue
+    cot_melhor = min(item.cotacoes, key=lambda c: c.total_calculado)
+    total_bruto += item.quantidade_orcada * cot_melhor.preco_unitario - cot_melhor.desconto + cot_melhor.outros_custos
+    frete_total += cot_melhor.frete
+    total_geral += cot_melhor.total_calculado
+    origens.add(cot_melhor.origem)
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Itens", len(orc.itens))
@@ -122,49 +124,42 @@ m4.metric("Total geral", fmt_brl(round(total_geral, 2)))
 
 st.divider()
 
-# ── Tabela de itens ───────────────────────────────────────────────────────────
-st.markdown("### Itens do Orçamento")
+# ── Cotações por item ─────────────────────────────────────────────────────────
+st.markdown("### Cotações por Item")
+st.caption("★ indica o menor preço. O diretor pode devolver para revisão caso queira alterar a escolha do fornecedor.")
 
-import pandas as pd
-
-_STATUS_ITEM_PT = {
-    "SEM_COTACAO": "Sem cotação",
-    "COM_COTACAO": "Com cotação",
-    "APROVADO_DIRETOR": "Aprovado",
-    "REPROVADO_DIRETOR": "Reprovado",
-}
-
-rows_tab = []
-for item in sorted(orc.itens, key=lambda i: (i.categoria_nome, i.nome_item)):
-    cot_esc = next((c for c in item.cotacoes if c.id == item.cotacao_escolhida_id), None)
-    rows_tab.append({
-        "Item": item.nome_item,
-        "Categoria": item.categoria_nome,
-        "Qtd": item.quantidade_orcada,
-        "Tipo": "Avulsa" if item.tipo == "AVULSA" else "Estoque",
-        "Fornecedor/Origem": cot_esc.origem if cot_esc else "—",
-        "Unitário": fmt_brl(cot_esc.preco_unitario) if cot_esc else "—",
-        "Total": fmt_brl(cot_esc.total_calculado) if cot_esc else "—",
-        "Frete": fmt_brl(cot_esc.frete) if cot_esc and cot_esc.frete else "—",
-    })
-
-st.dataframe(pd.DataFrame(rows_tab), use_container_width=True, hide_index=True)
-
-# Alternativas por item (expandível)
-with st.expander("Ver cotações alternativas por item"):
-    for item in sorted(orc.itens, key=lambda i: (i.categoria_nome, i.nome_item)):
-        if len(item.cotacoes) <= 1:
-            continue
-        st.markdown(f"**{item.nome_item}** — Qtd: {item.quantidade_orcada}")
-        cotacoes_ord = sorted(item.cotacoes, key=lambda c: c.total_calculado)
-        for idx, cot in enumerate(cotacoes_ord[:3], 1):
-            escolhida = " ← escolhida" if cot.id == item.cotacao_escolhida_id else ""
-            st.markdown(
-                f"{idx}. **{cot.origem}** — {fmt_brl(cot.preco_unitario)} unit. "
-                f"— Total: **{fmt_brl(cot.total_calculado)}**"
-                + (f" (frete: {fmt_brl(cot.frete)})" if cot.frete else "")
-                + escolhida
-            )
+for item in sorted(orc.itens, key=lambda i: (i.categoria_nome or "", i.nome_item)):
+    tipo_str = "Compra Avulsa" if item.tipo == "AVULSA" else "Estoque"
+    status_item = item.status_item
+    _badge_status = (
+        " · ✅ Aprovado" if status_item == "APROVADO_DIRETOR"
+        else " · ❌ Reprovado" if status_item == "REPROVADO_DIRETOR"
+        else ""
+    )
+    st.markdown(
+        f"**{item.nome_item}**"
+        f"<span style='color:#737373;font-size:13px;'>"
+        f" · {item.categoria_nome or '—'} · Qtd: {item.quantidade_orcada} · {tipo_str}"
+        f"{_badge_status}</span>",
+        unsafe_allow_html=True,
+    )
+    if item.cotacoes:
+        cot_min_id = min(item.cotacoes, key=lambda c: c.total_calculado).id
+        rows_cot = []
+        for cot in sorted(item.cotacoes, key=lambda c: c.total_calculado):
+            melhor_label = "★ " if cot.id == cot_min_id else ""
+            rows_cot.append({
+                "Fornecedor / Origem": melhor_label + cot.origem,
+                "Unit.": fmt_brl(cot.preco_unitario),
+                "Frete": fmt_brl(cot.frete) if cot.frete else "—",
+                "Desconto": fmt_brl(cot.desconto) if cot.desconto else "—",
+                "Total": fmt_brl(cot.total_calculado),
+                "Data": cot.data_cotacao.strftime("%d/%m/%Y") if cot.data_cotacao else "—",
+            })
+        st.dataframe(pd.DataFrame(rows_cot), hide_index=True, use_container_width=True)
+    else:
+        st.caption("_Sem cotações registradas._")
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
 st.divider()
 

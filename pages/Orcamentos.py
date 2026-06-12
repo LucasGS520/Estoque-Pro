@@ -17,28 +17,32 @@ import datetime
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from core import tempo
 from core.config import APP_BASE_URL
 from core.database import get_session_factory
-from core.models import ItemOrcamento, Orcamento
+from core.models import CotacaoOrcamento, ItemListaCompra, ItemOrcamento, Orcamento
 from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
 from services.compras_service import get_periodos_com_consolidacao
+from services.estoque_service import atualizar_fornecedores_item
+from services.fornecedor_service import create_fornecedor, get_all_fornecedores
 from services.orcamento_service import (
     add_cotacao,
+    editar_cotacao,
     cancelar_orcamento,
     criar_orcamento,
     criar_nova_versao,
-    desescolher_cotacao,
     enviar_para_aprovacao,
-    escolher_cotacao,
+    get_fornecedores_para_item_orcamento,
     get_lista_final_para_orcamento,
     get_orcamento_ativo,
     get_orcamentos_periodo,
     get_resumo,
     menor_cotacao,
     remover_cotacao,
+    sincronizar_com_lista_final,
 )
 from documents.orcamento import gerar_documento_cotacao
 
@@ -175,14 +179,244 @@ _STATUS_BADGE: dict[str, tuple[str, str]] = {
 }
 
 
+@st.dialog("Fornecedor", width="large")
+def _modal_adicionar_fornecedor(item_orc_id: int) -> None:
+    _aba_forn = st.radio(
+        "aba_forn",
+        ["Criar novo fornecedor", "Vincular fornecedor existente", "Fornecedor temporário"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"aba_forn_{item_orc_id}",
+    )
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+    # ── Criar novo fornecedor ─────────────────────────────────────────────
+    if _aba_forn == "Criar novo fornecedor":
+        nome = st.text_input("Nome *", key=f"md_forn_nome_{item_orc_id}")
+        _mc1, _mc2 = st.columns(2)
+        contato = _mc1.text_input("Contato", key=f"md_forn_contato_{item_orc_id}")
+        telefone = _mc2.text_input("Telefone", key=f"md_forn_tel_{item_orc_id}")
+        email = st.text_input("E-mail", key=f"md_forn_email_{item_orc_id}")
+        _mp1, _mp2 = st.columns(2)
+        preferencial = _mp1.checkbox("Preferencial", key=f"md_forn_pref_{item_orc_id}")
+        ativo = _mp2.checkbox("Ativo", value=True, key=f"md_forn_ativo_{item_orc_id}")
+
+        _erros = []
+        if not nome.strip():
+            _erros.append("Nome é obrigatório.")
+
+        if _erros:
+            for e in _erros:
+                st.warning(e, icon="⚠️")
+
+        if st.button(
+            "Cadastrar e vincular",
+            type="primary",
+            disabled=bool(_erros),
+            key=f"md_forn_salvar_{item_orc_id}",
+            use_container_width=True,
+        ):
+            try:
+                with SessionLocal() as session:
+                    novo_forn = create_fornecedor(
+                        session,
+                        nome=nome.strip(),
+                        contato_nome=contato.strip() or None,
+                        telefone=telefone.strip() or None,
+                        email=email.strip() or None,
+                        preferencial=preferencial,
+                        ativo=ativo,
+                    )
+                    item_orc = session.query(ItemOrcamento).filter_by(id=item_orc_id).first()
+                    lista = session.query(ItemListaCompra).filter_by(id=item_orc.item_lista_id).first()
+                    existentes = get_fornecedores_para_item_orcamento(session, item_orc_id)
+                    ids_atuais = [f.id for f in existentes]
+                    atualizar_fornecedores_item(session, lista.item_id, ids_atuais + [novo_forn.id])
+                st.success(f"Fornecedor **{nome.strip()}** cadastrado e vinculado.")
+                st.session_state[f"_novo_forn_nome_{item_orc_id}"] = nome.strip()
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e), icon="⚠️")
+
+    # ── Vincular fornecedor existente ─────────────────────────────────────
+    elif _aba_forn == "Vincular fornecedor existente":
+        with SessionLocal() as _s:
+            _todos = get_all_fornecedores(_s)
+            _existentes = get_fornecedores_para_item_orcamento(_s, item_orc_id)
+
+        _ids_vinculados = {f.id for f in _existentes}
+        _disponiveis = [f for f in _todos if f.id not in _ids_vinculados]
+
+        if not _disponiveis:
+            st.info("Todos os fornecedores ativos já estão vinculados a este item.", icon="ℹ️")
+        else:
+            _opcoes = {f.nome: f.id for f in _disponiveis}
+            _selecionados = st.multiselect(
+                "Selecione os fornecedores",
+                list(_opcoes.keys()),
+                key=f"md_vincular_forn_{item_orc_id}",
+            )
+            if st.button(
+                f"Vincular {len(_selecionados)} fornecedor(es)" if _selecionados else "Selecione ao menos um",
+                type="primary",
+                disabled=not _selecionados,
+                key=f"md_vincular_btn_{item_orc_id}",
+                use_container_width=True,
+            ):
+                try:
+                    with SessionLocal() as session:
+                        item_orc = session.query(ItemOrcamento).filter_by(id=item_orc_id).first()
+                        lista = session.query(ItemListaCompra).filter_by(id=item_orc.item_lista_id).first()
+                        ids_novos = [_opcoes[n] for n in _selecionados]
+                        atualizar_fornecedores_item(
+                            session, lista.item_id, list(_ids_vinculados) + ids_novos,
+                        )
+                    st.success(", ".join(f"**{n}**" for n in _selecionados) + " vinculado(s) com sucesso.")
+                    if len(_selecionados) == 1:
+                        st.session_state[f"_novo_forn_nome_{item_orc_id}"] = _selecionados[0]
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e), icon="⚠️")
+
+    # ── Fornecedor temporário ─────────────────────────────────────────────
+    elif _aba_forn == "Fornecedor temporário":
+        st.info(
+            "Use para cotações de fornecedores que não precisam ser cadastrados no sistema. "
+            "O nome será usado apenas nesta cotação.",
+            icon="ℹ️",
+        )
+        temp_nome = st.text_input(
+            "Nome / Origem *",
+            placeholder="Ex: Mercado Livre, Atacadão, site externo",
+            key=f"md_forn_temp_{item_orc_id}",
+        )
+        if not temp_nome.strip():
+            st.warning("Informe o nome ou origem.", icon="⚠️")
+        elif st.button(
+            "Usar para esta cotação",
+            type="primary",
+            key=f"md_forn_temp_usar_{item_orc_id}",
+            use_container_width=True,
+        ):
+            st.session_state[f"cot_forn_temp_active_{item_orc_id}"] = temp_nome.strip()
+            st.rerun()
+
+
+@st.dialog("Editar cotação", width="large")
+def _modal_editar_cotacao(cotacao_id: int) -> None:
+    with SessionLocal() as _s:
+        cot = _s.get(CotacaoOrcamento, cotacao_id)
+        if cot is None:
+            st.error("Cotação não encontrada.")
+            return
+        _origem = cot.origem
+        _preco  = cot.preco_unitario
+        _frete  = cot.frete or 0.0
+        _desc   = cot.desconto or 0.0
+        _outros = cot.outros_custos or 0.0
+        _link   = cot.link or ""
+        _obs    = cot.observacao or ""
+        _data   = cot.data_cotacao
+
+    def _fmt_br(v: float) -> str:
+        return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def _parse_brl(s: str) -> float | None:
+        s = s.strip().replace("R$", "").replace(" ", "")
+        if not s:
+            return None
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    c1, c2 = st.columns(2)
+    with c1:
+        origem_edit = st.text_input(
+            "Origem / Fornecedor *", value=_origem, key=f"ec_orig_{cotacao_id}",
+        )
+        link_edit = st.text_input(
+            "Link do produto (opcional)", value=_link, key=f"ec_link_{cotacao_id}",
+        )
+    with c2:
+        preco_edit = st.text_input(
+            "Preço unitário (R$) *", value=_fmt_br(_preco), key=f"ec_preco_{cotacao_id}",
+            help="Apenas números, ponto e vírgula. Ex: 1.250,90",
+        )
+        data_edit = st.date_input(
+            "Data da cotação *", value=_data, key=f"ec_data_{cotacao_id}",
+        )
+
+    c3, c4, c5 = st.columns(3)
+    with c3:
+        frete_edit = st.text_input("Frete (R$)", value=_fmt_br(_frete), key=f"ec_frete_{cotacao_id}")
+    with c4:
+        desc_edit = st.text_input("Desconto (R$)", value=_fmt_br(_desc), key=f"ec_desc_{cotacao_id}")
+    with c5:
+        outros_edit = st.text_input("Outros custos (R$)", value=_fmt_br(_outros), key=f"ec_outros_{cotacao_id}")
+
+    obs_edit = st.text_area(
+        "Observação (opcional)", value=_obs, height=60, key=f"ec_obs_{cotacao_id}",
+    )
+
+    if st.button(
+        "Salvar alterações", type="primary",
+        key=f"ec_salvar_{cotacao_id}", use_container_width=True,
+    ):
+        preco_v  = _parse_brl(preco_edit or "")
+        frete_v  = _parse_brl(frete_edit or "") or 0.0
+        desc_v   = _parse_brl(desc_edit or "") or 0.0
+        outros_v = _parse_brl(outros_edit or "") or 0.0
+        if not origem_edit.strip():
+            st.error("O campo 'Origem / Fornecedor' é obrigatório.", icon="⚠️")
+        elif preco_v is None or preco_v <= 0:
+            st.error("Preço unitário inválido ou zero. Use o formato R$ 1.250,90.", icon="⚠️")
+        else:
+            try:
+                with SessionLocal() as session:
+                    editar_cotacao(
+                        session, cotacao_id,
+                        origem=origem_edit.strip(),
+                        preco_unitario=preco_v,
+                        frete=frete_v,
+                        desconto=desc_v,
+                        outros_custos=outros_v,
+                        link=link_edit.strip() or None,
+                        observacao=obs_edit.strip() or None,
+                        data_cotacao=data_edit,
+                    )
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e), icon="⚠️")
+
+
 # ===========================================================================
 # ABA PAINEL
 # ===========================================================================
 if tab_sel == "Painel":
     with SessionLocal() as session:
+        _orc_pre = get_orcamento_ativo(session, periodo)
+        _sync_result = {"adicionados": 0, "removidos": 0, "atualizados": 0}
+        if _orc_pre and _orc_pre.status in ("RASCUNHO", "EM_COTACAO"):
+            _sync_result = sincronizar_com_lista_final(session, _orc_pre.id)
         orc = get_orcamento_ativo(session, periodo)
         lista_final = get_lista_final_para_orcamento(session, periodo)
         n_lista = len(lista_final["itens_estoque"]) + len(lista_final["itens_avulsos"])
+
+    if any(_sync_result.values()):
+        _partes: list[str] = []
+        if _sync_result["adicionados"]:
+            n = _sync_result["adicionados"]
+            _partes.append(f"+{n} item{'ns' if n > 1 else ''} adicionado{'s' if n > 1 else ''}")
+        if _sync_result["removidos"]:
+            n = _sync_result["removidos"]
+            _partes.append(f"{n} removido{'s' if n > 1 else ''}")
+        if _sync_result["atualizados"]:
+            n = _sync_result["atualizados"]
+            _partes.append(f"{n} quantidade{'s atualizada' if n > 1 else ' atualizada'}")
+        st.toast(f"Orçamento sincronizado com a Lista Final — {', '.join(_partes)}", icon="🔄")
 
     # ── Sem Lista Final ─────────────────────────────────────────────────────
     if n_lista == 0:
@@ -356,14 +590,30 @@ elif tab_sel == "Cotações":
                 .order_by(ItemOrcamento.categoria_nome, ItemOrcamento.nome_item)
                 .all()
             )
-            _opcoes_cot: dict[str, int] = {
-                f"{i.nome_item} ({i.categoria_nome})": i.id
-                for i in itens_cot
+            cotacao_counts: dict[int, int] = {
+                row[0]: row[1]
+                for row in session.query(ItemOrcamento.id, func.count(CotacaoOrcamento.id))
+                .outerjoin(CotacaoOrcamento)
+                .filter(ItemOrcamento.orcamento_id == orc.id)
+                .group_by(ItemOrcamento.id)
+                .all()
             }
+            _itens_pendentes = [i for i in itens_cot if cotacao_counts.get(i.id, 0) == 0]
+            _itens_cotados = [i for i in itens_cot if cotacao_counts.get(i.id, 0) > 0]
+            _opcoes_cot: dict[str, int] = {}
+            for i in _itens_pendentes:
+                _opcoes_cot[f"⚠ {i.nome_item} ({i.categoria_nome})"] = i.id
+            for i in _itens_cotados:
+                n = cotacao_counts[i.id]
+                _opcoes_cot[f"✓ {i.nome_item} ({i.categoria_nome}) — {n} {'cotação' if n == 1 else 'cotações'}"] = i.id
+            _total_itens = len(itens_cot)
+            _com_cotacao = len(_itens_cotados)
             _orc_status = orc.status
             _orc_id = orc.id
         else:
             _opcoes_cot = {}
+            _total_itens = 0
+            _com_cotacao = 0
             _orc_status = None
             _orc_id = None
 
@@ -393,6 +643,9 @@ elif tab_sel == "Cotações":
                 _idx_pre = idx
                 break
 
+    st.progress(_com_cotacao / _total_itens if _total_itens else 0)
+    st.caption(f"{_com_cotacao} de {_total_itens} {'item' if _total_itens == 1 else 'itens'} com cotação registrada")
+
     item_sel_label = st.selectbox(
         "Item",
         _item_labels,
@@ -405,7 +658,7 @@ elif tab_sel == "Cotações":
     # Atualiza session_state para manter consistência com Painel
     st.session_state["orc_item_id"] = item_sel_id
 
-    # ── Carrega item e cotações ──────────────────────────────────────────────
+    # ── Carrega item, cotações e fornecedores vinculados ────────────────────
     with SessionLocal() as session:
         item = (
             session.query(ItemOrcamento)
@@ -418,7 +671,7 @@ elif tab_sel == "Cotações":
         item_tipo = item.tipo if item else "ESTOQUE"
         item_nome = item.nome_item if item else "—"
         item_qtd = item.quantidade_orcada if item else 0
-        item_cotacao_escolhida_id = item.cotacao_escolhida_id if item else None
+        fornecedores_vinculados = get_fornecedores_para_item_orcamento(session, item_sel_id)
 
     tipo_str = "Compra Avulsa" if item_tipo == "AVULSA" else "Estoque"
     st.markdown(
@@ -442,20 +695,13 @@ elif tab_sel == "Cotações":
         section_title(f"Cotações registradas ({len(cotacoes)})")
 
         for cot in sorted(cotacoes, key=lambda c: c.total_calculado):
-            is_menor = cot_min and cot.id == cot_min.id
-            is_escolhida = cot.id == item_cotacao_escolhida_id
-            bg_cor = "#f0fdf4" if is_escolhida else ("#fffbeb" if is_menor else "#fafafa")
-            badge = ""
-            if is_escolhida:
-                badge = (
-                    " <span style='background:#dcfce7;color:#16a34a;padding:1px 6px;"
-                    "border-radius:4px;font-size:11px;font-weight:600;'>ESCOLHIDA</span>"
-                )
-            elif is_menor:
-                badge = (
-                    " <span style='background:#fef9c3;color:#854d0e;padding:1px 6px;"
-                    "border-radius:4px;font-size:11px;'>menor preço</span>"
-                )
+            is_melhor = cot_min and cot.id == cot_min.id
+            bg_cor = "#f0fdf4" if is_melhor else "#fafafa"
+            badge = (
+                " <span style='background:#dcfce7;color:#16a34a;padding:1px 6px;"
+                "border-radius:4px;font-size:11px;font-weight:600;'>★ Melhor Preço</span>"
+                if is_melhor else ""
+            )
 
             st.markdown(
                 f"<div style='background:{bg_cor};border-radius:6px;padding:10px 14px;margin-bottom:6px;'>"
@@ -469,24 +715,11 @@ elif tab_sel == "Cotações":
             )
 
             if not is_bloqueado:
-                col_esc, col_rem = st.columns([2, 1])
-                with col_esc:
-                    if is_escolhida:
-                        if st.button("Remover escolha", key=f"deses_{cot.id}", use_container_width=True):
-                            with SessionLocal() as session:
-                                desescolher_cotacao(session, item_sel_id)
-                            st.rerun()
-                    else:
-                        if st.button(
-                            "Escolher esta cotação",
-                            key=f"esc_{cot.id}",
-                            type="primary",
-                            use_container_width=True,
-                        ):
-                            with SessionLocal() as session:
-                                escolher_cotacao(session, item_sel_id, cot.id)
-                            st.rerun()
-                with col_rem:
+                _bc1, _bc2 = st.columns(2)
+                with _bc1:
+                    if st.button("Editar", key=f"edit_{cot.id}", use_container_width=True):
+                        _modal_editar_cotacao(cot.id)
+                with _bc2:
                     if st.button("Remover", key=f"rem_{cot.id}", use_container_width=True):
                         with SessionLocal() as session:
                             remover_cotacao(session, cot.id)
@@ -497,10 +730,23 @@ elif tab_sel == "Cotações":
         st.info("Nenhuma cotação registrada para este item ainda.", icon="ℹ️")
 
     # ── Formulário de nova cotação ───────────────────────────────────────────
-    # Usa widgets soltos (sem st.form) para que Enter não dispare o salvamento.
-    # O formulário é resetado via versão incremental no session_state.
+    # O formulário fica atrás de um botão "+ Nova cotação" para evitar que a
+    # tela fique sempre com campos em branco. Limite de 5 cotações por item.
+    # O estado de abertura usa chave por item_sel_id — ao trocar de item o
+    # formulário fecha automaticamente (nova chave começa como False).
+    _MAX_COTACOES = 5
+    _form_key = f"cot_form_open_{item_sel_id}"
+
     if not is_bloqueado:
-        section_title("Registrar nova cotação")
+        if len(cotacoes) >= _MAX_COTACOES:
+            st.info(f"Limite de {_MAX_COTACOES} cotações por item atingido.", icon="ℹ️")
+        elif not st.session_state.get(_form_key, False):
+            if st.button("+ Nova cotação", key=f"btn_nova_cot_{item_sel_id}"):
+                st.session_state[_form_key] = True
+                st.rerun()
+
+    if not is_bloqueado and st.session_state.get(_form_key, False):
+        section_title("Nova cotação")
 
         def _parse_brl(s: str) -> float | None:
             """Converte string BR (ex: '1.250,90') para float. Retorna None se inválido."""
@@ -534,13 +780,57 @@ elif tab_sel == "Cotações":
         _sanitize_numeric_br(_k_desc)
         _sanitize_numeric_br(_k_outr)
 
+        _forn_id_sel = None
+        _temp_ativo_key = f"cot_forn_temp_active_{item_sel_id}"
+        _temp_nome_ativo = st.session_state.get(_temp_ativo_key)
+
         c1, c2 = st.columns(2)
         with c1:
-            origem = st.text_input(
-                "Origem / Fornecedor *",
-                placeholder="Ex: Mercado Livre, Fornecedor X",
-                key=f"cot_origem_{item_sel_id}_{_fv}",
-            )
+            if _temp_nome_ativo:
+                st.selectbox(
+                    "Origem / Fornecedor *",
+                    [_temp_nome_ativo],
+                    disabled=True,
+                    help="Fornecedor temporário — não cadastrado no sistema",
+                    key=f"cot_forn_temp_display_{item_sel_id}_{_fv}",
+                )
+                if st.button("Alterar", key=f"cot_forn_temp_alterar_{item_sel_id}_{_fv}"):
+                    del st.session_state[_temp_ativo_key]
+                    st.rerun()
+                origem = _temp_nome_ativo
+            elif fornecedores_vinculados:
+                _forn_names = [f.nome for f in fornecedores_vinculados]
+                _key_forn_sel = f"cot_forn_sel_{item_sel_id}_{_fv}"
+                _pre_sel_forn = st.session_state.pop(f"_novo_forn_nome_{item_sel_id}", None)
+                if _pre_sel_forn and _pre_sel_forn in _forn_names:
+                    st.session_state[_key_forn_sel] = _pre_sel_forn
+                _sel_forn = st.selectbox(
+                    "Origem / Fornecedor *",
+                    _forn_names,
+                    key=_key_forn_sel,
+                )
+                origem = _sel_forn
+                _forn_obj = next((f for f in fornecedores_vinculados if f.nome == _sel_forn), None)
+                _forn_id_sel = _forn_obj.id if _forn_obj else None
+                if st.button(
+                    "➕ Cadastrar novo fornecedor",
+                    key=f"btn_add_forn_{item_sel_id}_{_fv}",
+                    help="Cadastra um novo fornecedor e vincula a este item",
+                ):
+                    _modal_adicionar_fornecedor(item_sel_id)
+            else:
+                origem = st.text_input(
+                    "Origem / Fornecedor *",
+                    placeholder="Ex: Mercado Livre, Fornecedor X",
+                    key=f"cot_origem_{item_sel_id}_{_fv}",
+                )
+                if item_tipo != "AVULSA":
+                    if st.button(
+                        "➕ Cadastrar novo fornecedor",
+                        key=f"btn_add_forn_{item_sel_id}_{_fv}",
+                        help="Cadastra um novo fornecedor e vincula a este item",
+                    ):
+                        _modal_adicionar_fornecedor(item_sel_id)
             link = st.text_input(
                 "Link do produto (opcional)",
                 placeholder="https://...",
@@ -585,40 +875,49 @@ elif tab_sel == "Cotações":
             key=f"cot_obs_{item_sel_id}_{_fv}",
         )
 
-        if st.button("Salvar cotação", type="primary", key=f"btn_salvar_cot_{item_sel_id}_{_fv}"):
-            preco_unit = _parse_brl(preco_unit_str or "")
-            frete     = _parse_brl(frete_str or "") or 0.0
-            desconto  = _parse_brl(desconto_str or "") or 0.0
-            outros    = _parse_brl(outros_str or "") or 0.0
+        col_salvar, col_cancelar = st.columns([3, 1])
+        with col_salvar:
+            if st.button("Salvar cotação", type="primary", key=f"btn_salvar_cot_{item_sel_id}_{_fv}", use_container_width=True):
+                preco_unit = _parse_brl(preco_unit_str or "")
+                frete     = _parse_brl(frete_str or "") or 0.0
+                desconto  = _parse_brl(desconto_str or "") or 0.0
+                outros    = _parse_brl(outros_str or "") or 0.0
 
-            if not origem.strip():
-                st.error("O campo 'Origem / Fornecedor' é obrigatório.", icon="⚠️")
-            elif preco_unit is None or preco_unit <= 0:
-                st.error(
-                    "Preço unitário inválido ou zero. Use o formato R$ 1.250,90.",
-                    icon="⚠️",
-                )
-            else:
-                try:
-                    with SessionLocal() as session:
-                        add_cotacao(
-                            session,
-                            item_orc_id=item_sel_id,
-                            origem=origem.strip(),
-                            preco_unitario=preco_unit,
-                            data_cotacao=data_cot,
-                            frete=frete,
-                            desconto=desconto,
-                            outros_custos=outros,
-                            link=link.strip() if link.strip() else None,
-                            observacao=obs_cot.strip() if obs_cot.strip() else None,
-                        )
-                    # Incrementa versão do formulário → limpa todos os campos no rerun
-                    st.session_state[f"cot_fv_{item_sel_id}"] = _fv + 1
-                    st.success("Cotação salva.")
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e), icon="⚠️")
+                if not origem.strip():
+                    st.error("O campo 'Origem / Fornecedor' é obrigatório.", icon="⚠️")
+                elif preco_unit is None or preco_unit <= 0:
+                    st.error(
+                        "Preço unitário inválido ou zero. Use o formato R$ 1.250,90.",
+                        icon="⚠️",
+                    )
+                else:
+                    try:
+                        with SessionLocal() as session:
+                            add_cotacao(
+                                session,
+                                item_orc_id=item_sel_id,
+                                origem=origem.strip(),
+                                preco_unitario=preco_unit,
+                                data_cotacao=data_cot,
+                                frete=frete,
+                                desconto=desconto,
+                                outros_custos=outros,
+                                link=link.strip() if link.strip() else None,
+                                observacao=obs_cot.strip() if obs_cot.strip() else None,
+                                fornecedor_id=_forn_id_sel,
+                            )
+                        st.session_state[f"cot_fv_{item_sel_id}"] = _fv + 1
+                        st.session_state[_form_key] = False
+                        st.session_state.pop(f"cot_forn_temp_active_{item_sel_id}", None)
+                        st.success("Cotação salva.")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e), icon="⚠️")
+        with col_cancelar:
+            if st.button("Cancelar", key=f"btn_cancelar_cot_{item_sel_id}", use_container_width=True):
+                st.session_state[_form_key] = False
+                st.session_state.pop(f"cot_forn_temp_active_{item_sel_id}", None)
+                st.rerun()
 
 
 # ===========================================================================

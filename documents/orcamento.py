@@ -12,7 +12,7 @@ from docx.shared import Cm, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core import tempo
-from core.models import CotacaoOrcamento, ItemOrcamento, Orcamento
+from core.models import Orcamento
 from documents.base_doc import (
     adicionar_tabela,
     criar_documento,
@@ -90,8 +90,7 @@ def gerar_documento_cotacao(orc: Orcamento) -> Path:
 
     doc.add_paragraph()
 
-    # ── Resumo financeiro ───────────────────────────────────────────────────
-    itens_com_escolha = [i for i in orc.itens if i.cotacao_escolhida_id is not None]
+    # ── Resumo financeiro (baseado no menor preço por item) ────────────────
     itens_sem_cotacao = [i for i in orc.itens if not i.cotacoes]
 
     total_bruto = 0.0
@@ -99,13 +98,14 @@ def gerar_documento_cotacao(orc: Orcamento) -> Path:
     total_geral = 0.0
     origens: set[str] = set()
 
-    for item in itens_com_escolha:
-        cot = next((c for c in item.cotacoes if c.id == item.cotacao_escolhida_id), None)
-        if cot:
-            total_bruto += item.quantidade_orcada * cot.preco_unitario - cot.desconto + cot.outros_custos
-            frete_total += cot.frete
-            total_geral += cot.total_calculado
-            origens.add(cot.origem)
+    for item in orc.itens:
+        if not item.cotacoes:
+            continue
+        cot = min(item.cotacoes, key=lambda c: c.total_calculado)
+        total_bruto += item.quantidade_orcada * cot.preco_unitario - cot.desconto + cot.outros_custos
+        frete_total += cot.frete
+        total_geral += cot.total_calculado
+        origens.add(cot.origem)
 
     res_heading = doc.add_heading("Resumo Financeiro", level=3)
     for run in res_heading.runs:
@@ -137,20 +137,20 @@ def gerar_documento_cotacao(orc: Orcamento) -> Path:
 
     doc.add_paragraph()
 
-    # ── Tabela principal + alternativas por categoria ───────────────────────
+    # ── Cotações por item agrupadas por categoria ───────────────────────────
     itens_ord = sorted(orc.itens, key=lambda i: (i.categoria_nome or "", i.nome_item))
 
-    main_heading = doc.add_heading("Itens do Orçamento", level=3)
+    main_heading = doc.add_heading("Cotações por Item", level=3)
     for run in main_heading.runs:
         run.font.color.rgb = _COR_PRETO
 
-    col_headers = ["Item", "Qtd", "Tipo", "Fornecedor / Origem", "Unit.", "Total", "Frete", "Obs"]
-    col_widths   = [3.8, 0.9, 1.4, 3.2, 1.8, 1.8, 1.6, 2.5]
+    cot_headers = ["Fornecedor / Origem", "Unit.", "Frete", "Desconto", "Total", "Data"]
+    cot_widths  = [4.5, 1.8, 1.6, 1.6, 1.8, 1.8]
 
     for cat, grupo in groupby(itens_ord, key=lambda i: i.categoria_nome or "—"):
         itens_cat = list(grupo)
 
-        # Cabeçalho de categoria como mini-tabela para suportar fundo colorido
+        # Cabeçalho de categoria
         cat_tbl = doc.add_table(rows=1, cols=1)
         cat_tbl.style = "Table Grid"
         cat_cell = cat_tbl.rows[0].cells[0]
@@ -161,64 +161,61 @@ def gerar_documento_cotacao(orc: Orcamento) -> Path:
         run_ct.font.color.rgb = _COR_BRANCO
         _set_cell_bg(cat_cell, _HEX_CAT)
 
-        # Tabela dos itens da categoria
-        tbl = doc.add_table(rows=1, cols=len(col_headers))
-        tbl.style = "Table Grid"
-        hdr_cells = tbl.rows[0].cells
-        for j, h in enumerate(col_headers):
-            hdr_cells[j].text = h
-            r = hdr_cells[j].paragraphs[0].runs[0]
-            r.bold = True
-            r.font.size = Pt(8)
-            r.font.color.rgb = _COR_BRANCO
-            _set_cell_bg(hdr_cells[j], "1A1A1A")
-
-        for idx, item in enumerate(itens_cat):
-            cot_esc: CotacaoOrcamento | None = next(
-                (c for c in item.cotacoes if c.id == item.cotacao_escolhida_id), None
-            )
-            bg = "F5F5F5" if idx % 2 == 0 else "FFFFFF"
-            row_cells = tbl.add_row().cells
-            _preencher_linha_item(row_cells, item, cot_esc, bg)
-            for j, cell in enumerate(row_cells):
-                if j < len(col_widths):
-                    cell.width = Cm(col_widths[j])
-
-        doc.add_paragraph()
-
-        # Alternativas (itens com mais de 1 cotação)
         for item in itens_cat:
-            if len(item.cotacoes) <= 1:
-                continue
-            alt_p = doc.add_paragraph()
-            alt_run = alt_p.add_run(
-                f"Cotações para: {item.nome_item}  (Qtd: {item.quantidade_orcada})"
+            # Linha de identificação do item
+            item_p = doc.add_paragraph()
+            item_run = item_p.add_run(
+                f"{item.nome_item}  —  Qtd: {item.quantidade_orcada}"
+                f"  ({'Avulsa' if item.tipo == 'AVULSA' else 'Estoque'})"
             )
-            alt_run.bold = True
-            alt_run.font.size = Pt(8)
+            item_run.bold = True
+            item_run.font.size = Pt(9)
 
-            cotacoes_ord = sorted(item.cotacoes, key=lambda c: c.total_calculado)[:3]
-            menor_total = cotacoes_ord[0].total_calculado if cotacoes_ord else None
+            if not item.cotacoes:
+                sc_p = doc.add_paragraph()
+                sc_p.paragraph_format.left_indent = Cm(0.5)
+                sc_p.add_run("Sem cotações registradas.").font.size = Pt(8)
+                continue
 
-            for cot in cotacoes_ord:
-                linha = doc.add_paragraph()
-                linha.paragraph_format.left_indent = Cm(0.5)
-                destaque = cot.total_calculado == menor_total
-                prefixo = "✓ " if destaque else "   "
-                escolhida = "  ← escolhida" if cot.id == item.cotacao_escolhida_id else ""
-                texto = (
-                    f"{prefixo}{cot.origem}  —  "
-                    f"Unit: {_fmt(cot.preco_unitario)}  —  "
-                    f"Total: {_fmt(cot.total_calculado)}"
-                )
-                if cot.frete:
-                    texto += f"  (frete: {_fmt(cot.frete)})"
-                texto += escolhida
-                run_l = linha.add_run(texto)
-                run_l.font.size = Pt(8)
-                if destaque:
-                    run_l.font.color.rgb = _COR_VERDE
-                    run_l.bold = True
+            cotacoes_ord = sorted(item.cotacoes, key=lambda c: c.total_calculado)
+            menor_total = cotacoes_ord[0].total_calculado
+
+            # Tabela comparativa de cotações
+            tbl = doc.add_table(rows=1, cols=len(cot_headers))
+            tbl.style = "Table Grid"
+            hdr_cells = tbl.rows[0].cells
+            for j, h in enumerate(cot_headers):
+                hdr_cells[j].text = h
+                r = hdr_cells[j].paragraphs[0].runs[0]
+                r.bold = True
+                r.font.size = Pt(8)
+                r.font.color.rgb = _COR_BRANCO
+                _set_cell_bg(hdr_cells[j], "1A1A1A")
+
+            for idx, cot in enumerate(cotacoes_ord):
+                bg = "F0FDF4" if cot.total_calculado == menor_total else ("F5F5F5" if idx % 2 == 0 else "FFFFFF")
+                row_cells = tbl.add_row().cells
+                prefixo = "★ " if cot.total_calculado == menor_total else ""
+                valores = [
+                    prefixo + cot.origem,
+                    _fmt(cot.preco_unitario),
+                    _fmt(cot.frete) if cot.frete else "—",
+                    _fmt(cot.desconto) if cot.desconto else "—",
+                    _fmt(cot.total_calculado),
+                    cot.data_cotacao.strftime("%d/%m/%Y") if cot.data_cotacao else "—",
+                ]
+                for j, val in enumerate(valores):
+                    row_cells[j].text = val
+                    run_v = row_cells[j].paragraphs[0].runs[0]
+                    run_v.font.size = Pt(8)
+                    if cot.total_calculado == menor_total:
+                        run_v.bold = True
+                        run_v.font.color.rgb = _COR_VERDE
+                    _set_cell_bg(row_cells[j], bg)
+                    if j < len(cot_widths):
+                        row_cells[j].width = Cm(cot_widths[j])
+
+            doc.add_paragraph()
 
         doc.add_paragraph()
 
@@ -270,26 +267,3 @@ def gerar_documento_cotacao(orc: Orcamento) -> Path:
             c[1].paragraphs[0].runs[0].font.size = Pt(9)
 
     return salvar_com_timestamp(doc, f"orcamento_{orc.numero}_v{orc.versao}")
-
-
-def _preencher_linha_item(
-    cells,
-    item: ItemOrcamento,
-    cot: CotacaoOrcamento | None,
-    bg: str,
-) -> None:
-    valores = [
-        item.nome_item,
-        str(item.quantidade_orcada),
-        "Avulsa" if item.tipo == "AVULSA" else "Estoque",
-        cot.origem if cot else "—",
-        _fmt(cot.preco_unitario) if cot else "—",
-        _fmt(cot.total_calculado) if cot else "—",
-        _fmt(cot.frete) if cot and cot.frete else "—",
-        item.motivo_alteracao_qtd or "",
-    ]
-    for j, val in enumerate(valores):
-        cells[j].text = str(val)
-        if cells[j].paragraphs[0].runs:
-            cells[j].paragraphs[0].runs[0].font.size = Pt(8)
-        _set_cell_bg(cells[j], bg)
