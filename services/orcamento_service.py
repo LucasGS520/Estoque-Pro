@@ -38,6 +38,7 @@ STATUS_ORCAMENTO = (
     "ENVIADO_APROVACAO",
     "APROVADO",
     "APROVADO_PARCIAL",
+    "REVISAR",
     "DEVOLVIDO_REVISAO",
     "REPROVADO",
     "CANCELADO",
@@ -47,7 +48,7 @@ STATUS_ORCAMENTO = (
 _STATUS_ENCERRADO = {"APROVADO", "APROVADO_PARCIAL", "REPROVADO", "CANCELADO"}
 
 # Estados que bloqueiam edição de cotações
-_STATUS_BLOQUEADO = {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO"}
+_STATUS_BLOQUEADO = {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO", "REVISAR"}
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +287,19 @@ def _recarregar_item(session: Session, item_orc_id: int) -> ItemOrcamento:
     if item is None:
         raise ValueError(f"ItemOrcamento {item_orc_id} não encontrado.")
     return item
+
+
+def _desmarcar_lista_item(session: Session, item_orc: ItemOrcamento) -> None:
+    """Desmarca item da Lista Final — funciona para ESTOQUE e AVULSA."""
+    if item_orc.item_lista_id:
+        lista = session.get(ItemListaCompra, item_orc.item_lista_id)
+        if lista:
+            lista.incluir_na_lista_final = False
+            lista.atualizado_em = tempo.agora()
+    elif item_orc.tipo == "AVULSA" and item_orc.compra_avulsa_id:
+        avulsa = session.get(CompraAvulsa, item_orc.compra_avulsa_id)
+        if avulsa:
+            avulsa.incluir_na_lista_final = False
 
 
 def _verificar_editavel(orc: Orcamento):
@@ -605,12 +619,14 @@ def registrar_decisao_diretor(
     decisao: str,
     observacao_diretor: Optional[str] = None,
     itens_reprovados: Optional[list[int]] = None,
+    itens_revisao: Optional[list[int]] = None,
 ) -> Orcamento:
     """Registra a decisão do diretor sobre o orçamento.
 
     Args:
         decisao: 'APROVADO' | 'APROVADO_PARCIAL' | 'DEVOLVIDO_REVISAO' | 'REPROVADO'
-        itens_reprovados: lista de ItemOrcamento.id reprovados (para APROVADO_PARCIAL)
+        itens_reprovados: ids de ItemOrcamento reprovados definitivamente (para APROVADO_PARCIAL)
+        itens_revisao: ids de ItemOrcamento que precisam de nova cotação (para APROVADO_PARCIAL)
     """
     orc = get_orcamento_por_id(session, orcamento_id)
     if orc is None:
@@ -625,23 +641,41 @@ def registrar_decisao_diretor(
     if decisao not in decisoes_validas:
         raise ValueError(f"Decisão '{decisao}' inválida. Use: {decisoes_validas}")
 
-    orc.status = decisao
     orc.observacao_diretor = observacao_diretor
     orc.decidido_em = tempo.agora()
     orc.atualizado_em = tempo.agora()
 
     if decisao == "APROVADO":
+        orc.status = "APROVADO"
         for item in orc.itens:
             if item.status_item not in ("REPROVADO_DIRETOR",):
                 item.status_item = "APROVADO_DIRETOR"
 
-    elif decisao == "APROVADO_PARCIAL" and itens_reprovados:
-        reprovados_set = set(itens_reprovados)
+    elif decisao == "APROVADO_PARCIAL":
+        reprovados_set = set(itens_reprovados or [])
+        revisao_set = set(itens_revisao or [])
         for item in orc.itens:
             if item.id in reprovados_set:
                 item.status_item = "REPROVADO_DIRETOR"
-            elif item.status_item not in ("REPROVADO_DIRETOR",):
+            elif item.id in revisao_set:
+                item.status_item = "REVISAO_DIRETOR"
+            elif item.status_item not in ("REPROVADO_DIRETOR", "REVISAO_DIRETOR"):
                 item.status_item = "APROVADO_DIRETOR"
+        # Itens com revisão → status REVISAR (ativo); só reprovados → APROVADO_PARCIAL (encerrado)
+        orc.status = "REVISAR" if revisao_set else "APROVADO_PARCIAL"
+        # Auto-remove REPROVADO_DIRETOR da Lista Final em ambos os casos
+        for item in orc.itens:
+            if item.status_item == "REPROVADO_DIRETOR":
+                _desmarcar_lista_item(session, item)
+
+    elif decisao == "REPROVADO":
+        orc.status = "REPROVADO"
+        # Auto-remove TODOS os itens da Lista Final
+        for item in orc.itens:
+            _desmarcar_lista_item(session, item)
+
+    else:
+        orc.status = decisao  # DEVOLVIDO_REVISAO e outros legados
 
     session.commit()
     session.refresh(orc)
@@ -658,25 +692,44 @@ def criar_nova_versao(session: Session, orcamento_id: int) -> Orcamento:
     orc_anterior = get_orcamento_por_id(session, orcamento_id)
     if orc_anterior is None:
         raise ValueError(f"Orçamento {orcamento_id} não encontrado.")
-    if orc_anterior.status != "DEVOLVIDO_REVISAO":
+    _ACEITA_NOVA_VERSAO = {"DEVOLVIDO_REVISAO", "REVISAR"}
+    if orc_anterior.status not in _ACEITA_NOVA_VERSAO:
         raise ValueError(
-            f"Só é possível criar nova versão a partir de status DEVOLVIDO_REVISAO. "
+            f"Só é possível criar nova versão a partir de: {_ACEITA_NOVA_VERSAO}. "
             f"Status atual: '{orc_anterior.status}'."
         )
 
     nova_versao = orc_anterior.versao + 1
+
+    if orc_anterior.status == "REVISAR":
+        _obs_dir = orc_anterior.observacao_diretor or ""
+        _obs_geral = (
+            f"[Revisão v{orc_anterior.versao}] "
+            + (f"Obs. do diretor: {_obs_dir}" if _obs_dir else "Revisão solicitada pelo diretor.")
+        )
+    else:
+        _obs_geral = orc_anterior.observacao_geral
+
     nova = Orcamento(
         periodo_referencia=orc_anterior.periodo_referencia,
         numero=orc_anterior.numero,
         versao=nova_versao,
         status="EM_COTACAO",
         responsavel=orc_anterior.responsavel,
-        observacao_geral=orc_anterior.observacao_geral,
+        observacao_geral=_obs_geral,
     )
     session.add(nova)
     session.flush()
 
-    for item_ant in orc_anterior.itens:
+    # REVISAR: copiar apenas itens que precisam de revisão (aprovados já estão resolvidos)
+    # DEVOLVIDO_REVISAO: copiar todos os itens
+    itens_a_copiar = (
+        [i for i in orc_anterior.itens if i.status_item == "REVISAO_DIRETOR"]
+        if orc_anterior.status == "REVISAR"
+        else orc_anterior.itens
+    )
+
+    for item_ant in itens_a_copiar:
         novo_item = ItemOrcamento(
             orcamento_id=nova.id,
             item_lista_id=item_ant.item_lista_id,
@@ -692,26 +745,41 @@ def criar_nova_versao(session: Session, orcamento_id: int) -> Orcamento:
         session.add(novo_item)
         session.flush()
 
-        # Copia cotações apenas dos itens que não foram reprovados
-        if item_ant.status_item != "REPROVADO_DIRETOR":
-            for cot in item_ant.cotacoes:
-                nova_cot = CotacaoOrcamento(
-                    item_orcamento_id=novo_item.id,
-                    origem=cot.origem,
-                    fornecedor_id=cot.fornecedor_id,
-                    link=cot.link,
-                    preco_unitario=cot.preco_unitario,
-                    frete=cot.frete,
-                    desconto=cot.desconto,
-                    outros_custos=cot.outros_custos,
-                    total_calculado=cot.total_calculado,
-                    data_cotacao=cot.data_cotacao,
-                    observacao=cot.observacao,
-                )
-                session.add(nova_cot)
-                session.flush()
-                if cot.id == item_ant.cotacao_escolhida_id:
-                    novo_item.cotacao_escolhida_id = nova_cot.id
+        # Cotações a copiar:
+        # - REPROVADO_DIRETOR: nenhuma
+        # - REVISAO_DIRETOR: melhor cotação (ponto de partida)
+        # - demais: todas
+        if item_ant.status_item == "REPROVADO_DIRETOR":
+            cots_a_copiar = []
+        elif item_ant.status_item == "REVISAO_DIRETOR":
+            cots_a_copiar = (
+                [min(item_ant.cotacoes, key=lambda c: c.total_calculado)]
+                if item_ant.cotacoes else []
+            )
+        else:
+            cots_a_copiar = item_ant.cotacoes
+
+        for cot in cots_a_copiar:
+            nova_cot = CotacaoOrcamento(
+                item_orcamento_id=novo_item.id,
+                origem=cot.origem,
+                fornecedor_id=cot.fornecedor_id,
+                link=cot.link,
+                preco_unitario=cot.preco_unitario,
+                frete=cot.frete,
+                desconto=cot.desconto,
+                outros_custos=cot.outros_custos,
+                total_calculado=cot.total_calculado,
+                data_cotacao=cot.data_cotacao,
+                observacao=cot.observacao,
+            )
+            session.add(nova_cot)
+            session.flush()
+            _atualizar_melhor_cotacao(session, novo_item.id)
+
+    # Arquivar a versão anterior: fica visível no Histórico como "Substituído (v{nova})"
+    orc_anterior.status = "CANCELADO"
+    orc_anterior.atualizado_em = tempo.agora()
 
     session.commit()
     session.refresh(nova)
@@ -738,6 +806,50 @@ def get_itens_aprovados(session: Session, orcamento_id: int) -> list[ItemOrcamen
         )
         .all()
     )
+
+
+def remover_item_reprovado(session: Session, item_orc_id: int) -> None:
+    """Desmarca da Lista Final o item reprovado pelo diretor.
+
+    Para ESTOQUE: seta incluir_na_lista_final = False em ItemListaCompra.
+    Para AVULSA:  seta incluir_na_lista_final = False em CompraAvulsa.
+    O registro de ItemOrcamento é mantido para auditoria.
+    """
+    item = session.get(ItemOrcamento, item_orc_id)
+    if item is None:
+        raise ValueError(f"ItemOrcamento {item_orc_id} não encontrado.")
+    if item.status_item != "REPROVADO_DIRETOR":
+        raise ValueError("Só é possível remover itens com status REPROVADO_DIRETOR.")
+
+    if item.tipo == "ESTOQUE" and item.item_lista_id:
+        lista = session.get(ItemListaCompra, item.item_lista_id)
+        if lista:
+            lista.incluir_na_lista_final = False
+            lista.atualizado_em = tempo.agora()
+
+    elif item.tipo == "AVULSA" and item.compra_avulsa_id:
+        avulsa = session.get(CompraAvulsa, item.compra_avulsa_id)
+        if avulsa:
+            avulsa.incluir_na_lista_final = False
+
+    session.commit()
+
+
+def deletar_orcamento(session: Session, orc_id: int) -> None:
+    """Remove permanentemente um orçamento e todos os seus itens e cotações (cascade).
+
+    Não permite deletar orçamentos ativos em edição (RASCUNHO, EM_COTACAO, ENVIADO_APROVACAO).
+    """
+    orc = session.get(Orcamento, orc_id)
+    if orc is None:
+        raise ValueError(f"Orçamento {orc_id} não encontrado.")
+    _DELETAVEIS = {"APROVADO", "APROVADO_PARCIAL", "REPROVADO", "CANCELADO", "DEVOLVIDO_REVISAO", "REVISAR"}
+    if orc.status not in _DELETAVEIS:
+        raise ValueError(
+            f"Não é possível excluir orçamento com status '{orc.status}'. Cancele-o primeiro."
+        )
+    session.delete(orc)
+    session.commit()
 
 
 def sincronizar_com_lista_final(session: Session, orc_id: int) -> dict:

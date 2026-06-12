@@ -34,14 +34,17 @@ from services.orcamento_service import (
     cancelar_orcamento,
     criar_orcamento,
     criar_nova_versao,
+    deletar_orcamento,
     enviar_para_aprovacao,
     get_fornecedores_para_item_orcamento,
+    get_itens_aprovados,
     get_lista_final_para_orcamento,
     get_orcamento_ativo,
     get_orcamentos_periodo,
     get_resumo,
     menor_cotacao,
     remover_cotacao,
+    remover_item_reprovado,
     sincronizar_com_lista_final,
 )
 from documents.orcamento import gerar_documento_cotacao
@@ -157,14 +160,16 @@ _STATUS_PT = {
     "RASCUNHO": "Rascunho", "EM_COTACAO": "Em cotação",
     "PRONTO_PARA_APROVACAO": "Pronto para aprovação",
     "ENVIADO_APROVACAO": "Aguardando aprovação", "APROVADO": "Aprovado",
-    "APROVADO_PARCIAL": "Aprovado parcialmente", "DEVOLVIDO_REVISAO": "Devolvido para revisão",
+    "APROVADO_PARCIAL": "Aprovado parcialmente", "REVISAR": "Revisão solicitada",
+    "DEVOLVIDO_REVISAO": "Devolvido para revisão",
     "REPROVADO": "Reprovado", "CANCELADO": "Cancelado",
 }
 _STATUS_ITEM_PT = {
-    "SEM_COTACAO": "Sem cotação",
-    "COM_COTACAO": "Com cotação",
-    "APROVADO_DIRETOR": "Aprovado",
-    "REPROVADO_DIRETOR": "Reprovado",
+    "SEM_COTACAO":       "—",
+    "COM_COTACAO":       "—",
+    "APROVADO_DIRETOR":  "✅ Aprovado",
+    "REPROVADO_DIRETOR": "❌ Reprovado",
+    "REVISAO_DIRETOR":   "🔄 Revisão solicitada",
 }
 _STATUS_BADGE: dict[str, tuple[str, str]] = {
     "RASCUNHO":               ("#F4F4F5", "#737373"),
@@ -173,6 +178,7 @@ _STATUS_BADGE: dict[str, tuple[str, str]] = {
     "ENVIADO_APROVACAO":      ("#FEF3C7", "#B45309"),
     "APROVADO":               ("#DCFCE7", "#16A34A"),
     "APROVADO_PARCIAL":       ("#DCFCE7", "#16A34A"),
+    "REVISAR":                ("#FEF3C7", "#B45309"),
     "DEVOLVIDO_REVISAO":      ("#FEE2E2", "#DC2626"),
     "REPROVADO":              ("#FEE2E2", "#DC2626"),
     "CANCELADO":              ("#F4F4F5", "#737373"),
@@ -392,6 +398,67 @@ def _modal_editar_cotacao(cotacao_id: int) -> None:
                 st.error(str(e), icon="⚠️")
 
 
+@st.dialog("Orçamento aprovado — Resumo para Compra", width="large")
+def _dialog_resumo_compra(orc_enc: Orcamento) -> None:
+    """Exibe resumo de compra agrupado por fornecedor para o orçamento aprovado."""
+    with SessionLocal() as _s:
+        _itens = get_itens_aprovados(_s, orc_enc.id)
+
+    if not _itens:
+        st.warning("Nenhum item aprovado encontrado para este orçamento.")
+        return
+
+    _grupos: dict[str, list] = {}
+    _total_geral = 0.0
+    for _item in sorted(_itens, key=lambda i: (i.categoria_nome or "", i.nome_item)):
+        _cot = menor_cotacao(_item)
+        _forn = _cot.origem if _cot else "Sem fornecedor"
+        _grupos.setdefault(_forn, [])
+        _total_item = _cot.total_calculado if _cot else 0.0
+        _total_geral += _total_item
+        _grupos[_forn].append({
+            "Item": _item.nome_item,
+            "Categoria": _item.categoria_nome or "—",
+            "Qtd": _item.quantidade_orcada,
+            "Unitário": fmt_brl(_cot.preco_unitario) if _cot else "—",
+            "Frete": fmt_brl(_cot.frete) if _cot and _cot.frete else "—",
+            "Total": fmt_brl(_total_item),
+        })
+
+    st.caption(
+        f"{orc_enc.numero} v{orc_enc.versao} · "
+        f"{len(_itens)} item(ns) aprovado(s) · "
+        f"{len(_grupos)} fornecedor(es)"
+    )
+
+    for _forn, _rows in _grupos.items():
+        st.markdown(f"#### 🏪 {_forn}")
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True)
+
+    st.divider()
+    st.markdown(
+        f"<p style='text-align:right;font-size:16px;font-weight:700;margin:0;'>"
+        f"Total geral: {fmt_brl(_total_geral)}</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+
+    if st.button("📄 Gerar documento DOCX", type="secondary", use_container_width=True, key="btn_gerar_docx_compra"):
+        try:
+            _path = gerar_documento_cotacao(orc_enc)
+            with open(_path, "rb") as _f:
+                st.download_button(
+                    "⬇️ Baixar documento",
+                    _f,
+                    file_name=_path.name,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                    key="btn_download_docx_compra",
+                )
+        except Exception as _e:
+            st.error(f"Erro ao gerar documento: {_e}", icon="⚠️")
+
+
 # ===========================================================================
 # ABA PAINEL
 # ===========================================================================
@@ -429,6 +496,54 @@ if tab_sel == "Painel":
 
     # ── Sem orçamento ativo — formulário de criação ─────────────────────────
     if orc is None:
+        # Card de conclusão: mostra o último orçamento encerrado do período, se houver
+        with SessionLocal() as _s_enc:
+            _ultimo_encerrado = (
+                _s_enc.query(Orcamento)
+                .filter(
+                    Orcamento.periodo_referencia == periodo,
+                    Orcamento.status.in_({"APROVADO", "APROVADO_PARCIAL", "REPROVADO"}),
+                )
+                .order_by(Orcamento.versao.desc())
+                .first()
+            )
+        if _ultimo_encerrado:
+            _cfg_enc = {
+                "APROVADO": ("#DCFCE7", "#16A34A", "✅", "Orçamento aprovado integralmente.",
+                             "Todos os itens foram aprovados e estão no Orçamento Final, aguardando compra."),
+                "APROVADO_PARCIAL": ("#FEF3C7", "#B45309", "✅", "Orçamento aprovado parcialmente.",
+                                     "Itens aprovados estão no Orçamento Final. Itens reprovados foram removidos automaticamente."),
+                "REPROVADO": ("#FEE2E2", "#DC2626", "❌", "Orçamento reprovado.",
+                              "Todos os itens foram reprovados e removidos do Orçamento automaticamente."),
+            }.get(_ultimo_encerrado.status, ("#F4F4F5", "#737373", "ℹ️", "Ciclo encerrado.", ""))
+            _bg_enc, _fg_enc, _icon_enc, _titulo_enc, _detalhe_enc = _cfg_enc
+            _data_dec_enc = (
+                _ultimo_encerrado.decidido_em.strftime("%d/%m/%Y %H:%M")
+                if _ultimo_encerrado.decidido_em else "—"
+            )
+            st.markdown(
+                f"<div style='background:{_bg_enc};border-radius:8px;padding:16px 20px;margin-bottom:12px;'>"
+                f"<p style='color:{_fg_enc};font-size:16px;font-weight:700;margin:0 0 4px;'>"
+                f"{_icon_enc} {_titulo_enc}</p>"
+                f"<p style='color:#444;margin:0 0 4px;'>{_detalhe_enc}</p>"
+                f"<p style='color:#737373;font-size:12px;margin:0;'>"
+                f"{_ultimo_encerrado.numero} v{_ultimo_encerrado.versao} · Decidido em: {_data_dec_enc}</p>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if _ultimo_encerrado.status in ("APROVADO", "APROVADO_PARCIAL"):
+                if st.button(
+                    "Orçamento aprovado para compra",
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_ver_compra",
+                ):
+                    _dialog_resumo_compra(_ultimo_encerrado)
+            if st.button("Ver Histórico completo", use_container_width=False, key="btn_ver_historico_enc"):
+                st.session_state["orc_tab"] = "Histórico"
+                st.rerun()
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
         st.info(
             f"**Lista Final disponível — {_periodo_label}**  \n"
             f"{n_lista} item(ns) aprovado(s) para orçamento.",
@@ -473,9 +588,89 @@ if tab_sel == "Painel":
         )
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
+        # Carregar resumo e itens uma única vez para todo o bloco
         with SessionLocal() as session:
             resumo = get_resumo(session, orc)
+            itens_orc = (
+                session.query(ItemOrcamento)
+                .options(joinedload(ItemOrcamento.cotacoes))
+                .filter(ItemOrcamento.orcamento_id == orc.id)
+                .order_by(ItemOrcamento.categoria_nome, ItemOrcamento.nome_item)
+                .all()
+            )
+            rows_tabela = []
+            for item in itens_orc:
+                cot_menor = menor_cotacao(item)
+                rows_tabela.append({
+                    "Item": item.nome_item,
+                    "Categoria": item.categoria_nome,
+                    "Qtd": item.quantidade_orcada,
+                    "Tipo": "Avulsa" if item.tipo == "AVULSA" else "Estoque",
+                    "Cotações": len(item.cotacoes),
+                    "Melhor valor": fmt_brl(cot_menor.total_calculado) if cot_menor else "—",
+                    "Fornecedor": cot_menor.origem if cot_menor else "—",
+                    "Status": _STATUS_ITEM_PT.get(item.status_item, item.status_item),
+                })
 
+        is_bloqueado = orc.status in {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO", "REVISAR"}
+
+        # ── Feedback contextual pós-decisão + ação (ANTES das métricas) ─────
+        def _btn_nova_versao():
+            if st.button(
+                f"Criar novo orçamento (v{orc.versao + 1})",
+                type="primary",
+                key="btn_nova_versao",
+            ):
+                try:
+                    with SessionLocal() as _s:
+                        nova = criar_nova_versao(_s, orc.id)
+                    st.success(f"Nova versão criada: **{nova.numero} v{nova.versao}**.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e), icon="⚠️")
+
+        if orc.status == "REVISAR":
+            _n_revisao   = sum(1 for i in itens_orc if i.status_item == "REVISAO_DIRETOR")
+            _n_aprovados = sum(1 for i in itens_orc if i.status_item == "APROVADO_DIRETOR")
+            _n_reprovados = sum(1 for i in itens_orc if i.status_item == "REPROVADO_DIRETOR")
+            _msg_rev = (
+                f"**{_n_revisao} item(ns) precisam de novas cotações.** "
+                f"{_n_aprovados} item(ns) já aprovados"
+                + (f" · {_n_reprovados} reprovado(s) removido(s) da lista" if _n_reprovados else "")
+                + ".  \n_Apenas os itens em revisão serão copiados para a nova versão._"
+            )
+            if orc.decidido_em:
+                _msg_rev += f"  \n_Decisão em: {orc.decidido_em.strftime('%d/%m/%Y %H:%M')}_"
+            if orc.observacao_diretor:
+                _msg_rev += f"  \n**Obs. do diretor:** {orc.observacao_diretor}"
+            st.warning(_msg_rev, icon="🔄")
+            _btn_nova_versao()
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        elif orc.status == "DEVOLVIDO_REVISAO":
+            st.warning(
+                "O diretor devolveu o orçamento para revisão geral. "
+                "Crie uma nova versão para re-cotar todos os itens.",
+                icon="↩️",
+            )
+            _btn_nova_versao()
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        elif (
+            orc.status in ("EM_COTACAO", "RASCUNHO")
+            and orc.observacao_geral
+            and "[Revisão" in orc.observacao_geral
+        ):
+            _ctx = orc.observacao_geral.replace(
+                "[Revisão v", "Esta versão foi criada a partir da revisão da v"
+            )
+            st.info(
+                f"↩️ {_ctx}  \n"
+                "_Todos os itens abaixo precisam de novas ou ajustadas cotações antes do reenvio para aprovação._",
+            )
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+        # ── Métricas ─────────────────────────────────────────────────────────
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total de itens", resumo.total_itens)
         c2.metric("Com cotação escolhida", resumo.com_escolha)
@@ -487,37 +682,12 @@ if tab_sel == "Painel":
         # ── Tabela de itens (read-only) ──────────────────────────────────────
         section_title("Itens do Orçamento")
 
-        with SessionLocal() as session:
-            itens_orc = (
-                session.query(ItemOrcamento)
-                .options(joinedload(ItemOrcamento.cotacoes))
-                .filter(ItemOrcamento.orcamento_id == orc.id)
-                .order_by(ItemOrcamento.categoria_nome, ItemOrcamento.nome_item)
-                .all()
-            )
-            rows_tabela = []
-            for item in itens_orc:
-                cot_esc = next((c for c in item.cotacoes if c.id == item.cotacao_escolhida_id), None)
-                cot_menor = menor_cotacao(item)
-                rows_tabela.append({
-                    "Item": item.nome_item,
-                    "Categoria": item.categoria_nome,
-                    "Qtd": item.quantidade_orcada,
-                    "Tipo": "Avulsa" if item.tipo == "AVULSA" else "Estoque",
-                    "Cotações": len(item.cotacoes),
-                    "Melhor valor": fmt_brl(cot_menor.total_calculado) if cot_menor else "—",
-                    "Escolhida": cot_esc.origem if cot_esc else "—",
-                    "Status": _STATUS_ITEM_PT.get(item.status_item, item.status_item),
-                })
-
         if rows_tabela:
             st.dataframe(
                 pd.DataFrame(rows_tabela),
                 use_container_width=True,
                 hide_index=True,
             )
-
-        is_bloqueado = orc.status in {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO"}
 
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
@@ -560,21 +730,6 @@ if tab_sel == "Painel":
                 f"Orçamento aguardando aprovação. Envie o link ao diretor:  \n**{link_aprov}**",
                 icon="🔗",
             )
-
-        # Criar nova versão após devolução
-        if orc.status == "DEVOLVIDO_REVISAO":
-            if st.button(
-                f"Criar nova versão (v{orc.versao + 1})",
-                type="primary",
-                key="btn_nova_versao",
-            ):
-                try:
-                    with SessionLocal() as session:
-                        nova = criar_nova_versao(session, orc.id)
-                    st.success(f"Nova versão criada: **{nova.numero} v{nova.versao}**.")
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e), icon="⚠️")
 
 
 # ===========================================================================
@@ -629,7 +784,7 @@ elif tab_sel == "Cotações":
         empty_state("📦", "Orçamento sem itens", "O orçamento não possui itens cadastrados.")
         st.stop()
 
-    is_bloqueado = _orc_status in {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO"}
+    is_bloqueado = _orc_status in {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO", "REVISAR"}
 
     # ── Seletor de item ──────────────────────────────────────────────────────
     # Pré-seleciona o item vindo do Painel (se houver); senão usa o primeiro.
@@ -671,6 +826,9 @@ elif tab_sel == "Cotações":
         item_tipo = item.tipo if item else "ESTOQUE"
         item_nome = item.nome_item if item else "—"
         item_qtd = item.quantidade_orcada if item else 0
+        item_status = item.status_item if item else "SEM_COTACAO"
+        item_lista_id = item.item_lista_id if item else None
+        item_compra_avulsa_id = item.compra_avulsa_id if item else None
         fornecedores_vinculados = get_fornecedores_para_item_orcamento(session, item_sel_id)
 
     tipo_str = "Compra Avulsa" if item_tipo == "AVULSA" else "Estoque"
@@ -687,6 +845,49 @@ elif tab_sel == "Cotações":
             "edição de cotações bloqueada.",
             icon="🔒",
         )
+
+    # ── Bloco pós-decisão do diretor ─────────────────────────────────────────
+    if item_status == "APROVADO_DIRETOR":
+        st.success("Item aprovado pelo diretor. Nenhuma ação adicional necessária.")
+
+    elif item_status == "REVISAO_DIRETOR":
+        st.warning(
+            "O diretor solicitou revisão das cotações deste item. "
+            "Crie uma nova versão do orçamento no **Painel** para refazer a cotação. "
+            "A melhor cotação atual será mantida como referência.",
+            icon="🔄",
+        )
+
+    elif item_status == "REPROVADO_DIRETOR":
+        # Verifica se já foi removido da Lista Final
+        _ja_removido = False
+        if item_tipo == "ESTOQUE" and item_lista_id:
+            with SessionLocal() as _s:
+                _lista = _s.get(ItemListaCompra, item_lista_id)
+                _ja_removido = _lista is not None and not _lista.incluir_na_lista_final
+        elif item_tipo == "AVULSA" and item_compra_avulsa_id:
+            from core.models import CompraAvulsa
+            with SessionLocal() as _s:
+                _avulsa = _s.get(CompraAvulsa, item_compra_avulsa_id)
+                _ja_removido = _avulsa is not None and not _avulsa.incluir_na_lista_final
+
+        if _ja_removido:
+            st.info("Item removido da Lista Final de Compras.", icon="✅")
+        else:
+            st.error("Este item foi reprovado pelo diretor.", icon="❌")
+            if st.button(
+                "Remover da Lista Final",
+                key=f"rm_lista_{item_sel_id}",
+                type="primary",
+                help="Desmarca este item da Lista Final de Compras — ele não será comprado neste período.",
+            ):
+                try:
+                    with SessionLocal() as session:
+                        remover_item_reprovado(session, item_sel_id)
+                    st.success("Item removido da Lista Final de Compras.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e), icon="⚠️")
 
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -948,17 +1149,26 @@ elif tab_sel == "Histórico":
         "RASCUNHO": "Rascunho", "EM_COTACAO": "Em cotação",
         "PRONTO_PARA_APROVACAO": "Pronto", "ENVIADO_APROVACAO": "Aguard. aprovação",
         "APROVADO": "Aprovado", "APROVADO_PARCIAL": "Aprovado parcial",
-        "DEVOLVIDO_REVISAO": "Devolvido", "REPROVADO": "Reprovado", "CANCELADO": "Cancelado",
+        "REVISAR": "Revisão solicitada", "DEVOLVIDO_REVISAO": "Devolvido",
+        "REPROVADO": "Reprovado", "CANCELADO": "Cancelado",
     }
 
     for orc_h in historico:
+        _h_status_label = _STATUS_PT_HIST.get(orc_h.status, orc_h.status)
+        if orc_h.status == "CANCELADO":
+            _proxima_versao = next(
+                (h.versao for h in historico if h.numero == orc_h.numero and h.versao > orc_h.versao),
+                None,
+            )
+            if _proxima_versao:
+                _h_status_label = f"Substituído (v{_proxima_versao})"
         with st.expander(
             f"{orc_h.numero}  ·  v{orc_h.versao}  ·  "
-            f"{_STATUS_PT_HIST.get(orc_h.status, orc_h.status)}"
+            f"{_h_status_label}"
             f"  ·  Responsável: {orc_h.responsavel}",
             expanded=(orc_h.versao == historico[0].versao),
         ):
-            col_inf, col_btn = st.columns([3, 1])
+            col_inf, col_dl, col_del = st.columns([3, 1, 1])
             with col_inf:
                 st.markdown(
                     f"**Criado em:** {orc_h.criado_em.strftime('%d/%m/%Y %H:%M')}  \n"
@@ -967,7 +1177,7 @@ elif tab_sel == "Histórico":
                     + (f"  \n**Decidido em:** {orc_h.decidido_em.strftime('%d/%m/%Y %H:%M')}" if orc_h.decidido_em else "")
                     + (f"  \n**Obs diretor:** {orc_h.observacao_diretor}" if orc_h.observacao_diretor else ""),
                 )
-            with col_btn:
+            with col_dl:
                 try:
                     _docx_bytes, _docx_name = _bytes_docx_orcamento(orc_h.id)
                     st.download_button(
@@ -980,3 +1190,20 @@ elif tab_sel == "Histórico":
                     )
                 except Exception as _e:
                     st.error(f"Erro ao gerar documento: {_e}", icon="⚠️")
+            with col_del:
+                if st.button("Excluir Orçamento", key=f"del_orc_{orc_h.id}", use_container_width=True):
+                    st.session_state[f"confirm_del_{orc_h.id}"] = True
+                if st.session_state.get(f"confirm_del_{orc_h.id}"):
+                    st.error("Exclusão permanente. Confirma?", icon="⚠️")
+                    if st.button("Sim, excluir", key=f"confirm_yes_{orc_h.id}", type="primary", use_container_width=True):
+                        try:
+                            with SessionLocal() as _sess:
+                                deletar_orcamento(_sess, orc_h.id)
+                            st.session_state.pop(f"confirm_del_{orc_h.id}", None)
+                            st.success("Orçamento excluído.")
+                            st.rerun()
+                        except ValueError as _e:
+                            st.error(str(_e), icon="⚠️")
+                    if st.button("Cancelar", key=f"confirm_no_{orc_h.id}", use_container_width=True):
+                        st.session_state.pop(f"confirm_del_{orc_h.id}", None)
+                        st.rerun()

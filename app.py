@@ -58,6 +58,7 @@ pg = st.navigation(
         st.Page("pages/Compras.py",    title="Análise de Compras",          icon=":material/shopping_cart:"),
         st.Page("pages/Orcamentos.py", title="Orçamentos",       icon=":material/receipt_long:"),
         st.Page("pages/Solicitar.py",  title="Solicitar Material", url_path="solicitar"),
+        st.Page("pages/Aprovacao_Orcamento.py", title="Aprovação de Orçamento", url_path="Aprovacao_Orcamento"),
     ],
     position="hidden",
 )
