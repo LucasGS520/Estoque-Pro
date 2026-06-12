@@ -289,35 +289,20 @@ class StockAnalyzer:
                                       total_solicitado=qtd_total, saldo=saldo,
                                       motivo_sugestao=motivo)
 
-        # Item OK (atual > ideal): verificar se a demanda aprovada depleta o estoque
-        # abaixo do mínimo ou do ideal — tornando a compra necessária mesmo assim.
-        if qtd_total > 0:
-            saldo_previsto = item.qtd_atual - qtd_total
-            if saldo_previsto <= item.estoque_minimo:
-                # Demanda crítica: vai derrubar estoque ao nível mínimo ou abaixo
-                return self._build_result(
-                    item, ItemStatus.ABAIXO_MINIMO, demanda_liquida, alvo,
-                    total_solicitado=qtd_total, saldo=saldo,
-                    motivo_sugestao=(
-                        f"Estoque acima do ideal, mas demanda aprovada ({qtd_total}) "
-                        f"depletaria abaixo do mínimo — qtd {demanda_liquida}: demanda líquida"
-                    ),
-                )
-            if saldo_previsto <= item.estoque_ideal and demanda_liquida > 0:
-                # Demanda reduz estoque à zona de atenção e ainda requer compra
-                return self._build_result(
-                    item, ItemStatus.ABAIXO_IDEAL, demanda_liquida, alvo,
-                    total_solicitado=qtd_total, saldo=saldo,
-                    motivo_sugestao=(
-                        f"Estoque acima do ideal, mas demanda aprovada ({qtd_total}) "
-                        f"reduz à zona de atenção — qtd {demanda_liquida}: demanda líquida"
-                    ),
-                )
-
+        # Item OK (atual > ideal): status sempre OK (reflete estoque físico atual).
+        # A qtd_recomendar usa demanda_liquida para capturar compras necessárias
+        # por causa de solicitações aprovadas, sem distorcer o status visível.
+        if demanda_liquida > 0:
+            motivo = (
+                f"Estoque acima do ideal — demanda aprovada ({qtd_total}) "
+                f"requer {demanda_liquida} unidades adicionais para manter estoque acima do mínimo"
+            )
+        else:
+            motivo = "Estoque adequado"
         return self._build_result(
-            item, ItemStatus.OK, 0, alvo,
+            item, ItemStatus.OK, demanda_liquida, alvo,
             total_solicitado=qtd_total, saldo=saldo,
-            motivo_sugestao="Estoque adequado",
+            motivo_sugestao=motivo,
         )
 
     def _build_result(

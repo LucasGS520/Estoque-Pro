@@ -11,13 +11,13 @@ import datetime
 from core import tempo
 from typing import Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, joinedload
 
 from core.engine import (
     AnalysisResult, AnalysisSummary, ItemRecord, SolicitacaoRecord, StockAnalyzer,
 )
-from core.models import CompraAvulsa, CicloSolicitacaoMaterial, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
+from core.models import CompraAvulsa, CicloSolicitacaoMaterial, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, Movimentacao, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from services.fornecedor_service import get_best_price, get_best_prices_bulk
 
@@ -57,6 +57,23 @@ def _item_to_record(item: Item, session: Session) -> ItemRecord:
         margem_operacional=margem,
         consumo_mediana_diario=revisao.consumo_mediana_diario if revisao else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Detecção de dados desatualizados
+# ---------------------------------------------------------------------------
+
+def has_pending_changes(session: Session, periodo: "datetime.date") -> bool:
+    """Retorna True se houver movimentações mais recentes que a última consolidação do período."""
+    ultima_consolidacao = (
+        session.query(func.max(ItemListaCompra.atualizado_em))
+        .filter(ItemListaCompra.periodo_referencia == periodo)
+        .scalar()
+    )
+    if ultima_consolidacao is None:
+        return False
+    ultima_mov = session.query(func.max(Movimentacao.criado_em)).scalar()
+    return ultima_mov is not None and ultima_mov > ultima_consolidacao
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ from services.compras_service import (
     deletar_solicitacao,
     get_consolidacao_periodo,
     get_lista_final,
+    has_pending_changes,
     get_painel_reposicao,
     get_periodos_com_atividade,
     get_periodos_com_consolidacao,
@@ -334,6 +335,7 @@ with SessionLocal() as _s:
     painel_lista = get_painel_reposicao(_s)
     cats = get_categorias(_s)
     cat_nomes = ["Todas"] + sorted({r.categoria for r in painel_lista if r.categoria})
+    _tem_mudancas = has_pending_changes(_s, periodo) if itens_lista else False
 
 _ultimo_dia    = calendar.monthrange(periodo.year, periodo.month)[1]
 _janela_inicio = f"01/{periodo.month:02d}/{periodo.year}"
@@ -392,7 +394,7 @@ _navegou_para_consolidacao = (
 # Atualiza _aba_anterior antes de qualquer branch para preservar estado correto
 st.session_state["_compras_aba_anterior"] = _aba_sel
 
-if _periodo_tipo == "atual" and (_navegou_para_consolidacao or not itens_lista) and not consolidar:
+if _periodo_tipo == "atual" and (_navegou_para_consolidacao or not itens_lista or _tem_mudancas) and not consolidar:
     with st.spinner("Atualizando análise..."):
         with SessionLocal() as _s:
             consolidar_periodo(_s, periodo)
