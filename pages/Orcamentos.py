@@ -173,8 +173,8 @@ _STATUS_PT = {
     "REPROVADO": "Reprovado", "CANCELADO": "Cancelado",
 }
 _STATUS_ITEM_PT = {
-    "SEM_COTACAO":       "—",
-    "COM_COTACAO":       "—",
+    "SEM_COTACAO":       "Sem cotação",
+    "COM_COTACAO":       "Com cotação",
     "APROVADO_DIRETOR":  "✅ Aprovado",
     "REPROVADO_DIRETOR": "❌ Reprovado",
     "REVISAO_DIRETOR":   "🔄 Revisão solicitada",
@@ -650,9 +650,9 @@ if tab_sel == "Painel":
             _n_reprovados = sum(1 for i in itens_orc if i.status_item == "REPROVADO_DIRETOR")
             _msg_rev = (
                 f"**{_n_revisao} item(ns) precisam de novas cotações.** "
-                f"{_n_aprovados} item(ns) já aprovados"
+                f"{_n_aprovados} item(ns) aprovados serão mantidos bloqueados na nova versão"
                 + (f" · {_n_reprovados} reprovado(s) removido(s) da lista" if _n_reprovados else "")
-                + ".  \n_Apenas os itens em revisão serão copiados para a nova versão._"
+                + "."
             )
             if orc.decidido_em:
                 _msg_rev += f"  \n_Decisão em: {orc.decidido_em.strftime('%d/%m/%Y %H:%M')}_"
@@ -674,15 +674,19 @@ if tab_sel == "Painel":
         elif (
             orc.status in ("EM_COTACAO", "RASCUNHO")
             and orc.observacao_geral
-            and "[Revisão" in orc.observacao_geral
+            and ("[Revisão" in orc.observacao_geral or "[Devolvido" in orc.observacao_geral)
         ):
-            _ctx = orc.observacao_geral.replace(
-                "[Revisão v", "Esta versão foi criada a partir da revisão da v"
+            _is_devolvido = "[Devolvido" in orc.observacao_geral
+            _ctx = (
+                orc.observacao_geral
+                .replace("[Revisão v", "Esta versão foi criada a partir da revisão da v")
+                .replace("[Devolvido v", "Esta versão foi criada a partir da v")
             )
-            st.info(
-                f"↩️ {_ctx}  \n"
-                "_Todos os itens abaixo precisam de novas ou ajustadas cotações antes do reenvio para aprovação._",
-            )
+            if _is_devolvido:
+                _detalhe = "_O orçamento foi devolvido integralmente pelo diretor. Itens aprovados estão bloqueados com suas cotações; os demais precisam de novas cotações._"
+            else:
+                _detalhe = "_Itens com status 'Sem cotação' precisam de novas cotações. Itens aprovados estão bloqueados com as cotações anteriores._"
+            st.info(f"↩️ {_ctx}  \n{_detalhe}")
             st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
         # ── Métricas ─────────────────────────────────────────────────────────

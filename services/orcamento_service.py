@@ -61,6 +61,7 @@ _STATUS_BLOQUEADO = {"ENVIADO_APROVACAO", "APROVADO", "APROVADO_PARCIAL", "REPRO
 @dataclass
 class ResumoOrcamento:
     total_itens: int = 0
+    aprovados: int = 0          # itens APROVADO_DIRETOR (já decididos — não bloqueiam envio)
     sem_cotacao: int = 0
     com_cotacao_sem_escolha: int = 0
     com_escolha: int = 0
@@ -537,6 +538,9 @@ def get_resumo(session: Session, orcamento: Orcamento) -> ResumoOrcamento:
     origens: set[str] = set()
 
     for item in itens:
+        if item.status_item == "APROVADO_DIRETOR":
+            resumo.aprovados += 1
+        # Aprovados fluem pelo bloco abaixo normalmente — têm cotações e escolha definida
         if not item.cotacoes:
             resumo.sem_cotacao += 1
         elif item.cotacao_escolhida_id is None:
@@ -658,6 +662,8 @@ def registrar_decisao_diretor(
         reprovados_set = set(itens_reprovados or [])
         revisao_set = set(itens_revisao or [])
         for item in orc.itens:
+            if item.status_item == "APROVADO_DIRETOR":
+                continue  # Já aprovado em versão anterior — imutável
             if item.id in reprovados_set:
                 item.status_item = "REPROVADO_DIRETOR"
             elif item.id in revisao_set:
@@ -711,7 +717,12 @@ def criar_nova_versao(session: Session, orcamento_id: int) -> Orcamento:
             + (f"Obs. do diretor: {_obs_dir}" if _obs_dir else "Revisão solicitada pelo diretor.")
         )
     else:
-        _obs_geral = orc_anterior.observacao_geral
+        _obs_dir = orc_anterior.observacao_diretor or ""
+        _base = orc_anterior.observacao_geral or ""
+        _obs_geral = (
+            f"[Devolvido v{orc_anterior.versao}] "
+            + (f"Obs. do diretor: {_obs_dir}. {_base}" if _obs_dir else _base)
+        ).strip()
 
     nova = Orcamento(
         periodo_referencia=orc_anterior.periodo_referencia,
@@ -724,15 +735,12 @@ def criar_nova_versao(session: Session, orcamento_id: int) -> Orcamento:
     session.add(nova)
     session.flush()
 
-    # REVISAR: copiar apenas itens que precisam de revisão (aprovados já estão resolvidos)
-    # DEVOLVIDO_REVISAO: copiar todos os itens
-    itens_a_copiar = (
-        [i for i in orc_anterior.itens if i.status_item == "REVISAO_DIRETOR"]
-        if orc_anterior.status == "REVISAR"
-        else orc_anterior.itens
-    )
+    # Ambos os paths: excluir apenas reprovados.
+    # Aprovados chegam bloqueados com cotações preservadas; demais partem do zero.
+    itens_a_copiar = [i for i in orc_anterior.itens if i.status_item != "REPROVADO_DIRETOR"]
 
     for item_ant in itens_a_copiar:
+        eh_aprovado = item_ant.status_item == "APROVADO_DIRETOR"
         novo_item = ItemOrcamento(
             orcamento_id=nova.id,
             item_lista_id=item_ant.item_lista_id,
@@ -743,42 +751,34 @@ def criar_nova_versao(session: Session, orcamento_id: int) -> Orcamento:
             quantidade_lista=item_ant.quantidade_lista,
             quantidade_orcada=item_ant.quantidade_orcada,
             motivo_alteracao_qtd=item_ant.motivo_alteracao_qtd,
-            status_item="SEM_COTACAO" if item_ant.status_item == "REPROVADO_DIRETOR" else "COM_COTACAO",
+            status_item="APROVADO_DIRETOR" if eh_aprovado else "SEM_COTACAO",
         )
         session.add(novo_item)
         session.flush()
 
-        # Cotações a copiar:
-        # - REPROVADO_DIRETOR: nenhuma
-        # - REVISAO_DIRETOR: melhor cotação (ponto de partida)
-        # - demais: todas
-        if item_ant.status_item == "REPROVADO_DIRETOR":
-            cots_a_copiar = []
-        elif item_ant.status_item == "REVISAO_DIRETOR":
-            cots_a_copiar = (
-                [min(item_ant.cotacoes, key=lambda c: c.total_calculado)]
-                if item_ant.cotacoes else []
-            )
-        else:
-            cots_a_copiar = item_ant.cotacoes
-
-        for cot in cots_a_copiar:
-            nova_cot = CotacaoOrcamento(
-                item_orcamento_id=novo_item.id,
-                origem=cot.origem,
-                fornecedor_id=cot.fornecedor_id,
-                link=cot.link,
-                preco_unitario=cot.preco_unitario,
-                frete=cot.frete,
-                desconto=cot.desconto,
-                outros_custos=cot.outros_custos,
-                total_calculado=cot.total_calculado,
-                data_cotacao=cot.data_cotacao,
-                observacao=cot.observacao,
-            )
-            session.add(nova_cot)
-            session.flush()
-            _atualizar_melhor_cotacao(session, novo_item.id)
+        if eh_aprovado:
+            # Copia cotações e preserva a escolhida (ids mudam — rastrear o mapeamento)
+            nova_escolhida_id = None
+            for cot in item_ant.cotacoes:
+                nova_cot = CotacaoOrcamento(
+                    item_orcamento_id=novo_item.id,
+                    origem=cot.origem,
+                    fornecedor_id=cot.fornecedor_id,
+                    link=cot.link,
+                    preco_unitario=cot.preco_unitario,
+                    frete=cot.frete,
+                    desconto=cot.desconto,
+                    outros_custos=cot.outros_custos,
+                    total_calculado=cot.total_calculado,
+                    data_cotacao=cot.data_cotacao,
+                    observacao=cot.observacao,
+                )
+                session.add(nova_cot)
+                session.flush()
+                if cot.id == item_ant.cotacao_escolhida_id:
+                    nova_escolhida_id = nova_cot.id
+            if nova_escolhida_id:
+                novo_item.cotacao_escolhida_id = nova_escolhida_id
 
     # Arquivar a versão anterior: fica visível no Histórico como "Substituído (v{nova})"
     orc_anterior.status = "CANCELADO"

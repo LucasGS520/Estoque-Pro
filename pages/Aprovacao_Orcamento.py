@@ -94,9 +94,15 @@ if orc is None:
     st.error(f"Orçamento #{orc_id} não encontrado.")
     st.stop()
 
-# Carregar itens aprovados na versão anterior (contexto read-only para o diretor)
-_itens_aprov_prev: list = []
-if orc.versao > 1:
+# Carregar itens aprovados para contexto read-only do diretor.
+# Prioridade 1: itens APROVADO_DIRETOR da versão atual (path DEVOLVIDO_REVISAO).
+# Prioridade 2: itens aprovados da versão anterior (path REVISAR, onde aprovados ficam na versão anterior).
+_itens_aprov_ctx: list = []
+_fonte_versao_ctx: str = ""
+_itens_aprov_ctx = [i for i in orc.itens if i.status_item == "APROVADO_DIRETOR"]
+if _itens_aprov_ctx:
+    _fonte_versao_ctx = "mantidos desta versão"
+elif orc.versao > 1:
     with SessionLocal() as _sp:
         _orc_prev = (
             _sp.query(_Orc)
@@ -105,7 +111,8 @@ if orc.versao > 1:
             .first()
         )
         if _orc_prev:
-            _itens_aprov_prev = [i for i in _orc_prev.itens if i.status_item == "APROVADO_DIRETOR"]
+            _itens_aprov_ctx = [i for i in _orc_prev.itens if i.status_item == "APROVADO_DIRETOR"]
+            _fonte_versao_ctx = f"aprovados na v{orc.versao - 1}"
 
 periodo_str = _periodo_fmt(orc.periodo_referencia)
 status_str  = _STATUS_PT.get(orc.status, orc.status)
@@ -198,13 +205,13 @@ if orc.status != "ENVIADO_APROVACAO":
 
 # ── Cotações por item ─────────────────────────────────────────────────────────
 
-if _itens_aprov_prev:
+if _itens_aprov_ctx:
     with st.expander(
-        f"✅ {len(_itens_aprov_prev)} item(ns) já aprovado(s) na versão anterior (v{orc.versao - 1})",
+        f"✅ {len(_itens_aprov_ctx)} item(ns) já aprovado(s) — {_fonte_versao_ctx}",
         expanded=False,
     ):
-        st.caption("Estes itens foram aprovados na versão anterior e não estão sujeitos a nova decisão.")
-        for _ip in sorted(_itens_aprov_prev, key=lambda i: (i.categoria_nome or "", i.nome_item)):
+        st.caption("Estes itens foram aprovados e não estão sujeitos a nova decisão.")
+        for _ip in sorted(_itens_aprov_ctx, key=lambda i: (i.categoria_nome or "", i.nome_item)):
             st.markdown(
                 f"✅ **{_ip.nome_item}** · {_ip.categoria_nome or '—'} · Qtd: {_ip.quantidade_orcada}",
             )
@@ -212,7 +219,10 @@ if _itens_aprov_prev:
 st.markdown("### Cotações por Item")
 st.caption("★ indica o menor preço. Selecione a decisão para cada item na linha do seu título.")
 
-sorted_itens = sorted(orc.itens, key=lambda i: (i.categoria_nome or "", i.nome_item))
+sorted_itens = sorted(
+    [i for i in orc.itens if i.status_item != "APROVADO_DIRETOR"],
+    key=lambda i: (i.categoria_nome or "", i.nome_item),
+)
 
 for item in sorted_itens:
     tipo_str = "Compra Avulsa" if item.tipo == "AVULSA" else "Estoque"
