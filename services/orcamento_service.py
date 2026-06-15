@@ -17,6 +17,8 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from core import tempo
+import json
+
 from core.models import (
     CotacaoOrcamento,
     Fornecedor,
@@ -25,6 +27,7 @@ from core.models import (
     Orcamento,
     CompraAvulsa,
     Item,
+    SolicitacaoCotacaoFornecedor,
 )
 
 # ---------------------------------------------------------------------------
@@ -963,3 +966,116 @@ def get_fornecedores_para_item_orcamento(
         .first()
     )
     return list(estoque_item.fornecedores_associados) if estoque_item else []
+
+
+# ---------------------------------------------------------------------------
+# Solicitação de cotação por WhatsApp
+# ---------------------------------------------------------------------------
+
+def formatar_telefone_wame(telefone: str) -> str:
+    """Normaliza um telefone para uso no link wa.me (só dígitos, com código +55)."""
+    digits = re.sub(r"\D", "", telefone)
+    if not digits.startswith("55"):
+        digits = "55" + digits
+    return digits
+
+
+def gerar_mensagem_whatsapp(
+    fornecedor_nome: str,
+    itens: list["ItemOrcamento"],
+    periodo_label: str,
+    prazo: Optional[datetime.date],
+) -> str:
+    """Gera o texto padronizado de solicitação de cotação para envio manual via wa.me."""
+    lista_txt = "\n".join(
+        f"• {i.nome_item} — {i.quantidade_orcada} un" for i in itens
+    ) if itens else "(nenhum item)"
+    prazo_txt = prazo.strftime("%d/%m/%Y") if prazo else "a combinar"
+    return (
+        f"Olá, {fornecedor_nome}!\n\n"
+        f"Estamos realizando a cotação de materiais para o período de *{periodo_label}* "
+        f"e gostaríamos de solicitar sua cotação para os seguintes itens:\n\n"
+        f"{lista_txt}\n\n"
+        f"Por favor, nos envie os valores até *{prazo_txt}*.\n\n"
+        f"Obrigado!"
+    )
+
+
+def get_fornecedores_para_solicitacao(
+    session: Session, orc_id: int
+) -> dict[int, dict]:
+    """Agrupa itens do orçamento por fornecedor para solicitação de cotação.
+
+    Retorna um dict keyed por fornecedor_id com:
+        {"fornecedor": Fornecedor, "itens": list[ItemOrcamento], "tem_whatsapp": bool}
+
+    Inclui:
+    - todos os fornecedores vinculados aos itens (com ou sem telefone)
+    - itens em status SEM_COTACAO ou COM_COTACAO (não bloqueado)
+    - itens de estoque (tipo ESTOQUE); avulsas não têm fornecedor vinculado
+    """
+    orc = session.query(Orcamento).filter_by(id=orc_id).first()
+    if not orc:
+        return {}
+
+    resultado: dict[int, dict] = {}
+    for item_orc in orc.itens:
+        if item_orc.status_item not in ("SEM_COTACAO", "COM_COTACAO"):
+            continue
+        fornecedores = get_fornecedores_para_item_orcamento(session, item_orc.id)
+        for forn in fornecedores:
+            if forn.id not in resultado:
+                resultado[forn.id] = {
+                    "fornecedor": forn,
+                    "itens": [],
+                    "tem_whatsapp": bool(forn.telefone),
+                }
+            resultado[forn.id]["itens"].append(item_orc)
+    return resultado
+
+
+def get_solicitacoes_enviadas(
+    session: Session, orc_id: int
+) -> list[SolicitacaoCotacaoFornecedor]:
+    """Retorna todas as solicitações de cotação enviadas para o orçamento."""
+    return (
+        session.query(SolicitacaoCotacaoFornecedor)
+        .filter_by(orcamento_id=orc_id)
+        .order_by(SolicitacaoCotacaoFornecedor.enviado_em.desc())
+        .all()
+    )
+
+
+def registrar_solicitacao_enviada(
+    session: Session,
+    orc_id: int,
+    fornecedor_id: int,
+    itens: list[ItemOrcamento],
+    prazo: Optional[datetime.date],
+    wamid: Optional[str],
+) -> SolicitacaoCotacaoFornecedor:
+    """Persiste o registro de uma solicitação de cotação enviada por WhatsApp."""
+    itens_json = json.dumps(
+        [{"nome_item": i.nome_item, "quantidade": i.quantidade_orcada} for i in itens],
+        ensure_ascii=False,
+    )
+    sol = SolicitacaoCotacaoFornecedor(
+        orcamento_id=orc_id,
+        fornecedor_id=fornecedor_id,
+        itens_json=itens_json,
+        prazo_resposta=prazo,
+        wamid=wamid,
+        status="ENVIADO",
+    )
+    session.add(sol)
+    session.commit()
+    session.refresh(sol)
+    return sol
+
+
+def marcar_solicitacao_respondida(session: Session, solicitacao_id: int) -> None:
+    """Marca uma solicitação de cotação como respondida."""
+    sol = session.query(SolicitacaoCotacaoFornecedor).filter_by(id=solicitacao_id).first()
+    if sol:
+        sol.status = "RESPONDIDO"
+        session.commit()

@@ -19,6 +19,7 @@ import requests
 from core.config import (
     WA_ACCESS_TOKEN,
     WA_PHONE_NUMBER_ID,
+    WA_TEMPLATE_COTACAO,
     WA_TEMPLATE_ENCERRAM,
     WA_TEMPLATE_FEEDBACK,
     WA_TEMPLATE_LANG,
@@ -237,4 +238,33 @@ def enviar_feedback_aprovacao(
     return _enviar_template(
         whatsapp, WA_TEMPLATE_FEEDBACK,
         [setor_nome, periodo_label, aprovados_txt, rejeitados_txt],
+    )
+
+
+def cotacao_configurada() -> bool:
+    """Retorna True se o template de solicitação de cotação está configurado."""
+    return bool(credenciais_configuradas() and WA_TEMPLATE_COTACAO)
+
+
+def enviar_solicitacao_cotacao(
+    telefone: str,
+    fornecedor_nome: str,
+    periodo_label: str,
+    itens: list[str],
+    prazo: str,
+) -> ResultadoEnvio:
+    """Envia solicitação de cotação para um fornecedor via WhatsApp.
+
+    Template esperado (4 variáveis no corpo, na ordem):
+        {{1}} = nome do fornecedor
+        {{2}} = período de referência (ex: "Junho/2026")
+        {{3}} = lista de itens (ex: "• Resma A4 — 5 un\\n• Caneta azul — 10 un")
+        {{4}} = prazo para resposta (ex: "20/06/2026")
+
+    `itens` deve ser uma lista de strings já formatadas por item.
+    """
+    lista_txt = "\n".join(f"• {i}" for i in itens) if itens else "(nenhum item)"
+    return _enviar_template(
+        telefone, WA_TEMPLATE_COTACAO,
+        [fornecedor_nome, periodo_label, lista_txt, prazo],
     )

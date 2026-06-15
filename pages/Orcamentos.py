@@ -14,6 +14,7 @@ Abas e responsabilidades:
 """
 
 import datetime
+from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
@@ -28,6 +29,7 @@ from core.ui import empty_state, fmt_brl, page_header, section_title, setup_page
 from services.compras_service import get_periodos_com_consolidacao
 from services.estoque_service import atualizar_fornecedores_item
 from services.fornecedor_service import create_fornecedor, get_all_fornecedores
+from services.notificacao_service import cotacao_configurada, enviar_solicitacao_cotacao
 from services.orcamento_service import (
     add_cotacao,
     editar_cotacao,
@@ -36,13 +38,19 @@ from services.orcamento_service import (
     criar_nova_versao,
     deletar_orcamento,
     enviar_para_aprovacao,
+    formatar_telefone_wame,
+    gerar_mensagem_whatsapp,
     get_fornecedores_para_item_orcamento,
+    get_fornecedores_para_solicitacao,
     get_itens_aprovados,
     get_lista_final_para_orcamento,
     get_orcamento_ativo,
     get_orcamentos_periodo,
     get_resumo,
+    get_solicitacoes_enviadas,
+    marcar_solicitacao_respondida,
     menor_cotacao,
+    registrar_solicitacao_enviada,
     remover_cotacao,
     remover_item_reprovado,
     sincronizar_com_lista_final,
@@ -203,6 +211,12 @@ def _modal_adicionar_fornecedor(item_orc_id: int) -> None:
         contato = _mc1.text_input("Contato", key=f"md_forn_contato_{item_orc_id}")
         telefone = _mc2.text_input("Telefone", key=f"md_forn_tel_{item_orc_id}")
         email = st.text_input("E-mail", key=f"md_forn_email_{item_orc_id}")
+        website = st.text_input(
+            "Website",
+            placeholder="https://www.site.com.br ou https://lista.mercadolivre.com.br/{query}",
+            help="Use `{query}` no URL para pesquisa automática pelo nome do item",
+            key=f"md_forn_website_{item_orc_id}",
+        )
         _mp1, _mp2 = st.columns(2)
         preferencial = _mp1.checkbox("Preferencial", key=f"md_forn_pref_{item_orc_id}")
         ativo = _mp2.checkbox("Ativo", value=True, key=f"md_forn_ativo_{item_orc_id}")
@@ -230,6 +244,7 @@ def _modal_adicionar_fornecedor(item_orc_id: int) -> None:
                         contato_nome=contato.strip() or None,
                         telefone=telefone.strip() or None,
                         email=email.strip() or None,
+                        website=website.strip() or None,
                         preferencial=preferencial,
                         ativo=ativo,
                     )
@@ -891,6 +906,21 @@ elif tab_sel == "Cotações":
 
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
+    # ── Sites de pesquisa (por item selecionado) ──────────────────────────────
+    _forn_com_website = [f for f in fornecedores_vinculados if f.website]
+
+    if _forn_com_website:
+        with st.expander("🔍 Pesquisar preços", expanded=False):
+            _btn_cols = st.columns(min(len(_forn_com_website), 4))
+            for _bi, _fweb in enumerate(_forn_com_website):
+                _url = _fweb.website
+                if "{query}" in _url:
+                    _url = _url.replace("{query}", quote_plus(item_nome))
+                with _btn_cols[_bi % 4]:
+                    st.link_button(f"🔗 {_fweb.nome}", _url, use_container_width=True)
+
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
     # ── Cotações registradas ─────────────────────────────────────────────────
     if cotacoes:
         section_title(f"Cotações registradas ({len(cotacoes)})")
@@ -1119,6 +1149,127 @@ elif tab_sel == "Cotações":
                 st.session_state[_form_key] = False
                 st.session_state.pop(f"cot_forn_temp_active_{item_sel_id}", None)
                 st.rerun()
+
+    # ── Solicitação a fornecedores (visão global por fornecedor) ──────────────
+    st.divider()
+    section_title("Solicitação a fornecedores")
+
+    _periodo_label_sol = periodo.strftime("%B/%Y").capitalize()
+
+    with SessionLocal() as _s_sol:
+        _grupos_sol = get_fornecedores_para_solicitacao(_s_sol, _orc_id)
+        _sols_list_sol = get_solicitacoes_enviadas(_s_sol, _orc_id)
+
+    _sols_by_forn_sol: dict = {}
+    for _s_entry in _sols_list_sol:
+        if _s_entry.fornecedor_id not in _sols_by_forn_sol:
+            _sols_by_forn_sol[_s_entry.fornecedor_id] = _s_entry
+
+    # Exibe apenas fornecedores com contato disponível (WhatsApp)
+    _grupos_com_contato = {k: v for k, v in _grupos_sol.items() if v["tem_whatsapp"]}
+
+    if not _grupos_com_contato:
+        st.caption("Nenhum fornecedor vinculado com WhatsApp nos itens do orçamento atual.")
+    else:
+        _prazo_sol = st.date_input(
+            "Prazo para resposta",
+            value=tempo.hoje() + datetime.timedelta(days=3),
+            min_value=tempo.hoje(),
+            key=f"sol_prazo_{_orc_id}",
+            format="DD/MM/YYYY",
+        )
+
+        for _forn_id_sol, _grupo_sol in _grupos_com_contato.items():
+            _forn_sol = _grupo_sol["fornecedor"]
+            _itens_sol = _grupo_sol["itens"]
+            _sol_ex_sol = _sols_by_forn_sol.get(_forn_id_sol)
+            _flash_key = f"sol_flash_{_orc_id}_{_forn_id_sol}"
+            _flash_sol = st.session_state.pop(_flash_key, None)
+
+            with st.container(border=True):
+                _hcol1, _hcol2 = st.columns([3, 1])
+                _hcol1.markdown(f"**{_forn_sol.nome}**")
+                _hcol2.caption("📱 WhatsApp disponível")
+
+                # Status da última solicitação (feedback persistente)
+                if _sol_ex_sol:
+                    _dt_sol = _sol_ex_sol.enviado_em.strftime("%d/%m/%Y") if _sol_ex_sol.enviado_em else "?"
+                    if _sol_ex_sol.status == "RESPONDIDO":
+                        st.success(f"Respondida — solicitação enviada em {_dt_sol}", icon="✅")
+                    else:
+                        _scol1, _scol2 = st.columns([4, 1])
+                        _scol1.warning(f"Aguardando resposta — enviada em {_dt_sol}", icon="⏳")
+                        if _scol2.button("✓ Respondida", key=f"sol_resp_{_sol_ex_sol.id}", use_container_width=True):
+                            with SessionLocal() as _s_resp_sol:
+                                marcar_solicitacao_respondida(_s_resp_sol, _sol_ex_sol.id)
+                            st.rerun()
+
+                # Flash após envio via API
+                if _flash_sol:
+                    if _flash_sol[0] == "success":
+                        st.success(_flash_sol[1])
+                    else:
+                        st.error(_flash_sol[1])
+
+                st.markdown("<div style='height:2px;'></div>", unsafe_allow_html=True)
+
+                _sel_todos_sol = st.checkbox(
+                    "Selecionar todos",
+                    key=f"sol_all_{_orc_id}_{_forn_id_sol}",
+                )
+                _selecionados_sol: list = []
+                if _sel_todos_sol:
+                    _selecionados_sol = list(_itens_sol)
+                    for _it_sol in _itens_sol:
+                        st.markdown(
+                            f"<span style='font-size:13px;color:#444;'>☑ {_it_sol.nome_item}"
+                            f" — {_it_sol.quantidade_orcada} un</span>",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    for _it_sol in _itens_sol:
+                        if st.checkbox(
+                            f"{_it_sol.nome_item} — {_it_sol.quantidade_orcada} un",
+                            key=f"sol_item_{_orc_id}_{_forn_id_sol}_{_it_sol.id}",
+                        ):
+                            _selecionados_sol.append(_it_sol)
+
+                st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+                _col_wame, _col_api = st.columns(2)
+
+                if _selecionados_sol:
+                    _msg_sol = gerar_mensagem_whatsapp(
+                        _forn_sol.nome, _selecionados_sol, _periodo_label_sol, _prazo_sol
+                    )
+                    _tel_sol = formatar_telefone_wame(_forn_sol.telefone)
+                    _wame_url = f"https://wa.me/{_tel_sol}?text={quote_plus(_msg_sol)}"
+                    _col_wame.link_button("📱 Abrir WhatsApp", _wame_url, use_container_width=True)
+
+                if cotacao_configurada() and _selecionados_sol and not is_bloqueado:
+                    if _col_api.button(
+                        "⚡ Enviar via API",
+                        key=f"sol_api_{_orc_id}_{_forn_id_sol}",
+                        use_container_width=True,
+                    ):
+                        _itens_txt_sol = [f"{i.nome_item} — {i.quantidade_orcada} un" for i in _selecionados_sol]
+                        _res_sol = enviar_solicitacao_cotacao(
+                            _forn_sol.telefone,
+                            _forn_sol.nome,
+                            _periodo_label_sol,
+                            _itens_txt_sol,
+                            _prazo_sol.strftime("%d/%m/%Y"),
+                        )
+                        with SessionLocal() as _s_reg_sol:
+                            registrar_solicitacao_enviada(
+                                _s_reg_sol, _orc_id, _forn_id_sol, _selecionados_sol,
+                                _prazo_sol, _res_sol.wamid if _res_sol.sucesso else None,
+                            )
+                        if _res_sol.sucesso:
+                            st.session_state[_flash_key] = ("success", f"✓ Mensagem enviada para {_forn_sol.nome}.")
+                        else:
+                            st.session_state[_flash_key] = ("error", f"Falha ao enviar para {_forn_sol.nome}: {_res_sol.motivo_falha}")
+                        st.rerun()
 
 
 # ===========================================================================

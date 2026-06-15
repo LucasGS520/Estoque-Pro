@@ -154,6 +154,7 @@ def create_fornecedor(
     contato_nome: Optional[str] = None,
     telefone: Optional[str] = None,
     email: Optional[str] = None,
+    website: Optional[str] = None,
     preferencial: bool = False,
     ativo: bool = True,
 ) -> Fornecedor:
@@ -167,6 +168,7 @@ def create_fornecedor(
         contato_nome=contato_nome or None,
         telefone=telefone or None,
         email=email or None,
+        website=website or None,
         preferencial=preferencial,
         ativo=ativo,
     )
@@ -208,6 +210,7 @@ def update_fornecedor(
     contato_nome: Optional[str] = None,
     telefone: Optional[str] = None,
     email: Optional[str] = None,
+    website: Optional[str] = None,
     preferencial: bool = False,
     ativo: bool = True,
 ) -> Fornecedor:
@@ -228,6 +231,7 @@ def update_fornecedor(
     forn.contato_nome = contato_nome or None
     forn.telefone = telefone or None
     forn.email = email or None
+    forn.website = website or None
     forn.preferencial = preferencial
     forn.ativo = ativo
     session.commit()

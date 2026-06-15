@@ -28,4 +28,5 @@ WA_TEMPLATE_LEMBRETE  = os.getenv("WA_TEMPLATE_LEMBRETE",  "lembrete_solicitacao
 WA_TEMPLATE_PRAZO     = os.getenv("WA_TEMPLATE_PRAZO",     "aviso_prazo_solicitacao")
 WA_TEMPLATE_ENCERRAM  = os.getenv("WA_TEMPLATE_ENCERRAM",  "encerramento_ciclo_materiais")
 WA_TEMPLATE_FEEDBACK  = os.getenv("WA_TEMPLATE_FEEDBACK",  "feedback_solicitacao_materiais")
+WA_TEMPLATE_COTACAO   = os.getenv("WA_TEMPLATE_COTACAO",   "")  # template de solicitação de cotação a fornecedores
 WA_TEMPLATE_LANG      = os.getenv("WA_TEMPLATE_LANG", "pt_BR")

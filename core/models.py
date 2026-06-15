@@ -94,6 +94,7 @@ class Fornecedor(Base):
     contato_nome = Column(String(100))
     telefone = Column(String(50))
     email = Column(String(100))
+    website = Column(String(500))
     preferencial = Column(Boolean, default=False)
     ativo = Column(Boolean, default=True)
     criado_em = Column(DateTime, default=tempo.agora)
@@ -458,4 +459,26 @@ class CotacaoOrcamento(Base):
     criado_em = Column(DateTime, default=tempo.agora)
 
     item_orcamento = relationship("ItemOrcamento", back_populates="cotacoes")
+    fornecedor = relationship("Fornecedor")
+
+
+class SolicitacaoCotacaoFornecedor(Base):
+    """Rastreia solicitações de cotação enviadas por WhatsApp a fornecedores.
+
+    Criada quando o responsável de compras envia uma mensagem WhatsApp a um
+    fornecedor pedindo preços de um conjunto de itens do orçamento.
+    """
+
+    __tablename__ = "solicitacoes_cotacao_fornecedor"
+
+    id = Column(Integer, primary_key=True)
+    orcamento_id = Column(Integer, ForeignKey("orcamentos.id"), nullable=False)
+    fornecedor_id = Column(Integer, ForeignKey("fornecedores.id"), nullable=False)
+    itens_json = Column(Text, nullable=False)   # JSON: [{"nome_item": str, "quantidade": int}]
+    prazo_resposta = Column(Date, nullable=True)
+    enviado_em = Column(DateTime, default=tempo.agora)
+    wamid = Column(String(100), nullable=True)  # ID da mensagem WhatsApp (auditoria)
+    status = Column(String(20), nullable=False, default="ENVIADO")  # ENVIADO | RESPONDIDO
+
+    orcamento = relationship("Orcamento")
     fornecedor = relationship("Fornecedor")

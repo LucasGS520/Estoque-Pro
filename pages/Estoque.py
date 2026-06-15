@@ -657,6 +657,7 @@ elif tab_sel == "Editar":
                     "Contato": f.contato_nome or "",
                     "Telefone": f.telefone or "",
                     "E-mail": f.email or "",
+                    "Website": f.website or "",
                     "Preferencial": "Sim" if f.preferencial else "Não",
                     "Ativo": "Sim" if f.ativo else "Não",
                 }
@@ -669,6 +670,7 @@ elif tab_sel == "Editar":
                     "contato_nome": f.contato_nome or "",
                     "telefone": f.telefone or "",
                     "email": f.email or "",
+                    "website": f.website or "",
                     "preferencial": f.preferencial,
                     "ativo": f.ativo,
                 }
@@ -718,6 +720,7 @@ elif tab_sel == "Editar":
                 nf_contato = st.text_input("Contato", key=f"nf_contato_{_nf_v}")
                 nf_tel = st.text_input("Telefone", placeholder="Ex: 11999998888", help="Digite apenas os números com DDD", key=f"nf_tel_{_nf_v}")
                 nf_email = st.text_input("E-mail", key=f"nf_email_{_nf_v}")
+                nf_website = st.text_input("Website", placeholder="https://www.site.com.br ou https://lista.mercadolivre.com.br/{query}", help="Use `{query}` no URL para pesquisa automática pelo nome do item", key=f"nf_website_{_nf_v}")
                 nf_pref = st.checkbox("Preferencial", key=f"nf_pref_{_nf_v}")
                 nf_ativo = st.checkbox("Ativo", value=True, key=f"nf_ativo_{_nf_v}")
 
@@ -738,7 +741,8 @@ elif tab_sel == "Editar":
                             with st.spinner("Salvando..."):
                                 with SessionLocal() as session:
                                     forn_criado = fornecedor_service.create_fornecedor(
-                                        session, nf_nome, nf_contato, _nf_tel_fmt, nf_email, nf_pref, nf_ativo
+                                        session, nf_nome, nf_contato, _nf_tel_fmt, nf_email,
+                                        nf_website.strip() or None, nf_pref, nf_ativo,
                                     )
                                     forn_nome_criado = forn_criado.nome
                             st.session_state["_nf_v"] = _nf_v + 1
@@ -775,6 +779,12 @@ elif tab_sel == "Editar":
                     ef_email = st.text_input(
                         "E-mail", value=forn_sel["email"], key=f"ef_{forn_sel_id}_email"
                     )
+                    ef_website = st.text_input(
+                        "Website", value=forn_sel["website"],
+                        placeholder="https://www.site.com.br ou https://lista.mercadolivre.com.br/{query}",
+                        help="Use `{query}` no URL para pesquisa automática pelo nome do item",
+                        key=f"ef_{forn_sel_id}_website",
+                    )
                     ef_pref = st.checkbox(
                         "Preferencial", value=forn_sel["preferencial"], key=f"ef_{forn_sel_id}_pref"
                     )
@@ -802,7 +812,8 @@ elif tab_sel == "Editar":
                                     with SessionLocal() as session:
                                         fornecedor_service.update_fornecedor(
                                             session, forn_sel_id,
-                                            ef_nome, ef_contato, _ef_tel_fmt, ef_email, ef_pref, ef_ativo,
+                                            ef_nome, ef_contato, _ef_tel_fmt, ef_email,
+                                            ef_website.strip() or None, ef_pref, ef_ativo,
                                         )
                                 for k in [k for k in st.session_state if k.startswith(f"ef_{forn_sel_id}_")]:
                                     st.session_state.pop(k)
