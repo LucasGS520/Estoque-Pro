@@ -67,6 +67,23 @@ def run_schema_migrations(engine):
         "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN envio_notificado_em DATETIME",
         "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN falha_envio BOOLEAN DEFAULT 0",
         "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN motivo_falha VARCHAR(200)",
+        # Fase 7: website do fornecedor (URL do site, suporta {query} para busca)
+        "ALTER TABLE fornecedores ADD COLUMN website VARCHAR(500)",
+    ]
+    # Tabelas novas (CREATE TABLE IF NOT EXISTS é idempotente no SQLite)
+    new_tables = [
+        """
+        CREATE TABLE IF NOT EXISTS solicitacoes_cotacao_fornecedor (
+            id INTEGER PRIMARY KEY,
+            orcamento_id INTEGER NOT NULL REFERENCES orcamentos(id),
+            fornecedor_id INTEGER NOT NULL REFERENCES fornecedores(id),
+            itens_json TEXT NOT NULL,
+            prazo_resposta DATE,
+            enviado_em DATETIME,
+            wamid VARCHAR(100),
+            status VARCHAR(20) NOT NULL DEFAULT 'ENVIADO'
+        )
+        """,
     ]
     with engine.connect() as conn:
         for stmt in new_columns:
@@ -76,6 +93,10 @@ def run_schema_migrations(engine):
             except Exception:
                 # Coluna já existe — ignorar
                 conn.rollback()
+
+        for stmt in new_tables:
+            conn.execute(text(stmt))
+            conn.commit()
 
         # Migração de dados: trata estoque_minimo/ideal legados como valores manuais.
         # Só migra linhas onde estoque_minimo_vigente ainda está zerado E estoque_minimo > 0.

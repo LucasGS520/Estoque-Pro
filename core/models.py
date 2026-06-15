@@ -94,6 +94,7 @@ class Fornecedor(Base):
     contato_nome = Column(String(100))
     telefone = Column(String(50))
     email = Column(String(100))
+    website = Column(String(500))
     preferencial = Column(Boolean, default=False)
     ativo = Column(Boolean, default=True)
     criado_em = Column(DateTime, default=tempo.agora)
@@ -354,3 +355,130 @@ class Importacao(Base):
     linhas_erro = Column(Integer)
     erros_json = Column(Text)
     criado_em = Column(DateTime, default=tempo.agora)
+
+
+# ---------------------------------------------------------------------------
+# Camada de Orçamentos
+# ---------------------------------------------------------------------------
+
+class Orcamento(Base):
+    """Orçamento de compra gerado a partir da Lista Final de Compras.
+
+    Cada orçamento é um snapshot versionado do processo de cotação para um
+    período. Versões anteriores ficam bloqueadas para auditoria quando o
+    diretor solicita revisão.
+    """
+
+    __tablename__ = "orcamentos"
+    __table_args__ = (
+        UniqueConstraint("periodo_referencia", "versao", name="uq_orcamento_periodo_versao"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    periodo_referencia = Column(Date, nullable=False)
+    numero = Column(String(20), nullable=False)          # ORC-YYYY-MM-NNN
+    versao = Column(Integer, nullable=False, default=1)
+    # Estados: RASCUNHO | EM_COTACAO | PRONTO_PARA_APROVACAO | ENVIADO_APROVACAO
+    #          APROVADO | APROVADO_PARCIAL | DEVOLVIDO_REVISAO | REPROVADO | CANCELADO
+    status = Column(String(30), nullable=False, default="RASCUNHO")
+    responsavel = Column(String(100), nullable=False)
+    observacao_geral = Column(Text, nullable=True)
+    enviado_em = Column(DateTime, nullable=True)
+    decidido_em = Column(DateTime, nullable=True)
+    observacao_diretor = Column(Text, nullable=True)
+    criado_em = Column(DateTime, default=tempo.agora)
+    atualizado_em = Column(DateTime, default=tempo.agora, onupdate=tempo.agora)
+
+    itens = relationship(
+        "ItemOrcamento",
+        back_populates="orcamento",
+        cascade="all, delete-orphan",
+    )
+
+
+class ItemOrcamento(Base):
+    """Linha de um orçamento: snapshot de um item da Lista Final.
+
+    Pode referenciar um ItemListaCompra (item de estoque) ou uma CompraAvulsa
+    (item fora do catálogo). Os campos nome_item/categoria_nome são snapshots
+    gravados no momento da criação do orçamento para garantir imutabilidade.
+    """
+
+    __tablename__ = "itens_orcamento"
+
+    id = Column(Integer, primary_key=True)
+    orcamento_id = Column(Integer, ForeignKey("orcamentos.id"), nullable=False)
+    item_lista_id = Column(Integer, ForeignKey("itens_lista_compra.id"), nullable=True)
+    compra_avulsa_id = Column(Integer, ForeignKey("compras_avulsas.id"), nullable=True)
+    nome_item = Column(String(200), nullable=False)
+    categoria_nome = Column(String(100), nullable=False, default="")
+    tipo = Column(String(10), nullable=False)             # ESTOQUE | AVULSA
+    quantidade_lista = Column(Integer, nullable=False)    # snapshot da Lista Final
+    quantidade_orcada = Column(Integer, nullable=False)   # pode diferir com motivo
+    motivo_alteracao_qtd = Column(Text, nullable=True)
+    # Não é FK formal para evitar dependência circular com CotacaoOrcamento.
+    cotacao_escolhida_id = Column(Integer, nullable=True)
+    # Estados: SEM_COTACAO | COM_COTACAO | APROVADO_DIRETOR | REPROVADO_DIRETOR
+    status_item = Column(String(30), nullable=False, default="SEM_COTACAO")
+    observacao_diretor = Column(Text, nullable=True)
+
+    orcamento = relationship("Orcamento", back_populates="itens")
+    item_lista = relationship("ItemListaCompra")
+    compra_avulsa = relationship("CompraAvulsa")
+    cotacoes = relationship(
+        "CotacaoOrcamento",
+        back_populates="item_orcamento",
+        cascade="all, delete-orphan",
+    )
+
+
+class CotacaoOrcamento(Base):
+    """Cotação registrada para um item de orçamento.
+
+    Uma cotação pode vir de pesquisa manual (link, marketplace) ou de um
+    fornecedor cadastrado (fornecedor_id, preparado para Fluxo B de envio
+    automático). O total_calculado é persistido para evitar recalcular na
+    geração de documentos.
+    """
+
+    __tablename__ = "cotacoes_orcamento"
+
+    id = Column(Integer, primary_key=True)
+    item_orcamento_id = Column(Integer, ForeignKey("itens_orcamento.id"), nullable=False)
+    origem = Column(String(200), nullable=False)          # nome do fornecedor ou marketplace
+    fornecedor_id = Column(Integer, ForeignKey("fornecedores.id"), nullable=True)  # prep Fluxo B
+    link = Column(String(500), nullable=True)
+    preco_unitario = Column(Float, nullable=False)
+    frete = Column(Float, nullable=False, default=0.0)
+    desconto = Column(Float, nullable=False, default=0.0)
+    outros_custos = Column(Float, nullable=False, default=0.0)
+    # qty * preco_unitario - desconto + outros_custos + frete
+    total_calculado = Column(Float, nullable=False)
+    data_cotacao = Column(Date, nullable=False)
+    observacao = Column(Text, nullable=True)
+    criado_em = Column(DateTime, default=tempo.agora)
+
+    item_orcamento = relationship("ItemOrcamento", back_populates="cotacoes")
+    fornecedor = relationship("Fornecedor")
+
+
+class SolicitacaoCotacaoFornecedor(Base):
+    """Rastreia solicitações de cotação enviadas por WhatsApp a fornecedores.
+
+    Criada quando o responsável de compras envia uma mensagem WhatsApp a um
+    fornecedor pedindo preços de um conjunto de itens do orçamento.
+    """
+
+    __tablename__ = "solicitacoes_cotacao_fornecedor"
+
+    id = Column(Integer, primary_key=True)
+    orcamento_id = Column(Integer, ForeignKey("orcamentos.id"), nullable=False)
+    fornecedor_id = Column(Integer, ForeignKey("fornecedores.id"), nullable=False)
+    itens_json = Column(Text, nullable=False)   # JSON: [{"nome_item": str, "quantidade": int}]
+    prazo_resposta = Column(Date, nullable=True)
+    enviado_em = Column(DateTime, default=tempo.agora)
+    wamid = Column(String(100), nullable=True)  # ID da mensagem WhatsApp (auditoria)
+    status = Column(String(20), nullable=False, default="ENVIADO")  # ENVIADO | RESPONDIDO
+
+    orcamento = relationship("Orcamento")
+    fornecedor = relationship("Fornecedor")

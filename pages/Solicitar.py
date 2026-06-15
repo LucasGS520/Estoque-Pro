@@ -146,7 +146,7 @@ st.markdown(
     f"text-align:center;margin-bottom:8px;'>"
     f"{_logo_tag}"
     f"<p style='color:rgba(235,235,235,0.65);font-size:13px;margin:8px 0 0;'>"
-    f"Controle de Estoque</p></div>",
+    f"</p></div>",
     unsafe_allow_html=True,
 )
 

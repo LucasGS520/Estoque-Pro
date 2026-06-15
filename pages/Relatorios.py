@@ -15,6 +15,11 @@ import plotly.express as px
 from core.database import get_session_factory
 from core.models import Item, Movimentacao
 from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS
+from documents.relatorio_categoria import gerar_relatorio_categoria
+from documents.relatorio_consumo   import gerar_relatorio_consumo
+from documents.relatorio_historico import gerar_relatorio_historico
+from documents.relatorio_item      import gerar_relatorio_item
+from documents.relatorio_setor     import gerar_relatorio_setor
 from services.estoque_service import get_categorias, get_setores
 from services.relatorio_service import (
     consumo_e_entradas_por_mes,
@@ -49,6 +54,21 @@ setup_page("Relatórios", "📈")
 page_header("Relatórios", subtitle="Consumo histórico por período, categoria, setor e item.")
 
 SessionLocal = get_session_factory()
+
+
+def _opcoes_periodo() -> dict[str, tuple[datetime.date, datetime.date]]:
+    """Retorna as 4 opções padrão de período como (data_inicio, data_fim)."""
+    hoje = tempo.hoje()
+    mes_atual_inicio  = hoje.replace(day=1)
+    mes_ant_fim       = mes_atual_inicio - datetime.timedelta(days=1)
+    mes_ant_inicio    = mes_ant_fim.replace(day=1)
+    return {
+        "Mês atual":        (mes_atual_inicio,                       hoje),
+        "Mês anterior":     (mes_ant_inicio,                         mes_ant_fim),
+        "Últimos 3 meses":  (hoje - datetime.timedelta(days=90),     hoje),
+        "Últimos 12 meses": (hoje - datetime.timedelta(days=365),    hoje),
+    }
+
 
 st.markdown("""
 <style>
@@ -109,24 +129,19 @@ if tab_sel == "Consumo × Reposição":
     cat_opcoes_m = {"Todas as categorias": None} | {c.nome: c.id for c in cats_disp}
     setor_opcoes_m = {"Todos os setores": None} | {s.nome: s.id for s in setores_disp_m}
 
+    _periodo_opts_m = _opcoes_periodo()
     c1, c2, c3 = st.columns(3)
     with c1:
-        periodo_mensal = st.selectbox(
-            "Período",
-            options=[3, 6, 12],
-            format_func=lambda m: f"Últimos {m} meses",
-            index=1,
-            key="mensal_periodo",
+        _periodo_sel_m = st.selectbox(
+            "Período", list(_periodo_opts_m.keys()), index=2, key="mensal_periodo",
         )
+        data_inicio_m, data_fim_m = _periodo_opts_m[_periodo_sel_m]
     with c2:
         cat_m_sel = st.selectbox("Categoria", list(cat_opcoes_m.keys()), key="mensal_cat")
         cat_m_id = cat_opcoes_m[cat_m_sel]
     with c3:
         setor_m_sel = st.selectbox("Setor", list(setor_opcoes_m.keys()), key="mensal_setor")
         setor_m_id = setor_opcoes_m[setor_m_sel]
-
-    data_fim_m = tempo.hoje()
-    data_inicio_m = data_fim_m - datetime.timedelta(days=periodo_mensal * 30)
 
     with SessionLocal() as session:
         df_timeline = get_timeline_consumo(session, data_inicio_m, data_fim_m, cat_m_id, setor_m_id)
@@ -149,7 +164,7 @@ if tab_sel == "Consumo × Reposição":
         # ── Bloco 3 — Gráfico Principal ───────────────────────────────────────
         df_timeline["mes_label"] = df_timeline["mes"].apply(_fmt_mes)
 
-        chart_title(f"Consumo × Reposição (últimos {periodo_mensal} meses)")
+        chart_title(f"Consumo × Reposição — {_periodo_sel_m}")
         df_line = df_timeline.melt(
             id_vars="mes_label",
             value_vars=["total_saida", "total_entrada"],
@@ -171,15 +186,26 @@ if tab_sel == "Consumo × Reposição":
         apply_chart_theme(fig_line, height=300, showlegend=True)
         st.plotly_chart(fig_line, use_container_width=True)
 
+        st.divider()
+        _doc_path_m = gerar_relatorio_consumo(_periodo_sel_m, kpis, df_timeline)
+        with open(_doc_path_m, "rb") as _f:
+            st.download_button(
+                "Baixar Relatório (DOCX)",
+                _f.read(),
+                file_name=_doc_path_m.name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_consumo",
+            )
+
 # ── Tab: Por Categoria ────────────────────────────────────────────────────────
 elif tab_sel == "Por Categoria":
     section_title("Filtros")
-    _PERIODO_CAT_OPTS = {"Últimos 3 meses": 3, "Últimos 6 meses": 6, "Últimos 12 meses": 12, "Todo histórico": None}
-    periodo_cat_label = st.selectbox("Período", list(_PERIODO_CAT_OPTS.keys()), index=1, key="cat_periodo")
-    periodo_cat = _PERIODO_CAT_OPTS[periodo_cat_label]
+    _periodo_opts_cat = _opcoes_periodo()
+    _periodo_sel_cat = st.selectbox("Período", list(_periodo_opts_cat.keys()), index=2, key="cat_periodo")
+    data_inicio_cat, data_fim_cat = _periodo_opts_cat[_periodo_sel_cat]
 
     with SessionLocal() as session:
-        df_cat = consumo_por_categoria(session, meses=periodo_cat)
+        df_cat = consumo_por_categoria(session, data_inicio=data_inicio_cat, data_fim=data_fim_cat)
 
     if df_cat.empty:
         empty_state("📊", "Nenhum dado disponível", "Nenhuma movimentação de saída registrada no período.")
@@ -213,19 +239,26 @@ elif tab_sel == "Por Categoria":
         fig.update_layout(coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
+        st.divider()
+        _doc_path_cat = gerar_relatorio_categoria(_periodo_sel_cat, df_cat)
+        with open(_doc_path_cat, "rb") as _f:
+            st.download_button(
+                "Baixar Relatório (DOCX)",
+                _f.read(),
+                file_name=_doc_path_cat.name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_categoria",
+            )
+
 # ── Tab: Por Setor ────────────────────────────────────────────────────────────
 elif tab_sel == "Por Setor":
     section_title("Filtros")
-    periodo_setor = st.selectbox(
-        "Período",
-        options=[3, 6, 12],
-        format_func=lambda m: f"Últimos {m} meses",
-        index=1,
-        key="setor_periodo",
-    )
+    _periodo_opts_set = _opcoes_periodo()
+    _periodo_sel_set = st.selectbox("Período", list(_periodo_opts_set.keys()), index=2, key="setor_periodo")
+    data_inicio_set, data_fim_set = _periodo_opts_set[_periodo_sel_set]
 
     with SessionLocal() as session:
-        df_setor = consumo_por_setor(session, meses=periodo_setor)
+        df_setor = consumo_por_setor(session, data_inicio=data_inicio_set, data_fim=data_fim_set)
 
     if df_setor.empty:
         empty_state(
@@ -282,18 +315,27 @@ elif tab_sel == "Por Setor":
         st.dataframe(df_exib, use_container_width=True, hide_index=True)
         st.caption(f"{len(df_setor)} setor(es) com movimentações no período.")
 
+        st.divider()
+        _doc_path_set = gerar_relatorio_setor(_periodo_sel_set, df_setor)
+        with open(_doc_path_set, "rb") as _f:
+            st.download_button(
+                "Baixar Relatório (DOCX)",
+                _f.read(),
+                file_name=_doc_path_set.name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_setor",
+            )
+
 # ── Tab: Por Item ─────────────────────────────────────────────────────────────
 elif tab_sel == "Por Item":
     section_title("Filtros")
+    _periodo_opts_item = _opcoes_periodo()
     col1, col2 = st.columns(2)
     with col1:
-        periodo_item = st.selectbox(
-            "Período",
-            options=[3, 6, 12],
-            format_func=lambda m: f"Últimos {m} meses",
-            index=1,
-            key="item_periodo",
+        _periodo_sel_item = st.selectbox(
+            "Período", list(_periodo_opts_item.keys()), index=2, key="item_periodo",
         )
+        data_inicio_item, data_fim_item = _periodo_opts_item[_periodo_sel_item]
     with col2:
         with SessionLocal() as session:
             setores_disp = get_setores(session, apenas_ativos=False)
@@ -302,7 +344,7 @@ elif tab_sel == "Por Item":
         setor_id_filtro = setor_opcoes[setor_sel]
 
     with SessionLocal() as session:
-        df_item = consumo_por_item(session, setor_id=setor_id_filtro, meses=periodo_item)
+        df_item = consumo_por_item(session, setor_id=setor_id_filtro, data_inicio=data_inicio_item, data_fim=data_fim_item)
 
     if df_item.empty:
         empty_state(
@@ -349,11 +391,23 @@ elif tab_sel == "Por Item":
         st.dataframe(df_exib, use_container_width=True, hide_index=True)
         st.caption(f"{len(df_item)} item(ns) com movimentações no período.")
 
+        st.divider()
+        _doc_path_item = gerar_relatorio_item(_periodo_sel_item, df_item, setor_sel)
+        with open(_doc_path_item, "rb") as _f:
+            st.download_button(
+                "Baixar Relatório (DOCX)",
+                _f.read(),
+                file_name=_doc_path_item.name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_item",
+            )
+
 # ── Tab: Histórico de Movimentações ──────────────────────────────────────────
 elif tab_sel == "Histórico de Movimentações":
     from core.models import Categoria as CategoriaModel
 
     section_title("Filtros")
+    _periodo_opts_hist = _opcoes_periodo()
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -364,9 +418,8 @@ elif tab_sel == "Histórico de Movimentações":
             key="hist_tipo",
         )
     with col2:
-        _PERIODO_HIST_OPTS = {"Últimos 30 dias": 1, "Últimos 3 meses": 3, "Últimos 6 meses": 6, "Todo histórico": None}
-        periodo_hist_label = st.selectbox("Período", list(_PERIODO_HIST_OPTS.keys()), index=3, key="hist_periodo")
-        periodo_hist = _PERIODO_HIST_OPTS[periodo_hist_label]
+        _periodo_sel_hist = st.selectbox("Período", list(_periodo_opts_hist.keys()), index=2, key="hist_periodo")
+        data_inicio_hist, data_fim_hist = _periodo_opts_hist[_periodo_sel_hist]
     with col3:
         with SessionLocal() as session:
             cats_hist = session.query(CategoriaModel).all()
@@ -379,7 +432,10 @@ elif tab_sel == "Histórico de Movimentações":
     tipo_filtro = None if filtro_tipo == "Todos" else filtro_tipo
 
     with SessionLocal() as session:
-        df_hist = historico_movimentacoes(session, tipo=tipo_filtro, limit=limite)
+        df_hist = historico_movimentacoes(
+            session, tipo=tipo_filtro, limit=int(limite),
+            data_inicio=data_inicio_hist, data_fim=data_fim_hist,
+        )
 
     if df_hist.empty:
         empty_state("📋", "Nenhuma movimentação encontrada")
@@ -396,21 +452,7 @@ elif tab_sel == "Histórico de Movimentações":
 
         # Filtro por categoria (client-side após fetch)
         if cat_hist_id is not None:
-            cat_nome = cat_hist_sel
-            df_hist = df_hist[df_hist["_cat"] == cat_nome]
-
-        # Filtro por período (client-side)
-        if periodo_hist is not None:
-            import datetime as _dt
-            corte = tempo.agora() - _dt.timedelta(days=periodo_hist * 30)
-            try:
-                df_hist = df_hist[
-                    df_hist["data"].apply(
-                        lambda d: _dt.datetime.strptime(d, "%d/%m/%Y %H:%M") >= corte
-                    )
-                ]
-            except Exception:
-                pass
+            df_hist = df_hist[df_hist["_cat"] == cat_hist_sel]
 
         # .copy() garante DataFrame independente — evita KeyError por CoW do pandas 2.0+
         df_hist = df_hist.drop(columns=["_cat"], errors="ignore").copy()
@@ -440,3 +482,15 @@ elif tab_sel == "Histórico de Movimentações":
             })
             st.write(df_exib.to_html(escape=False, index=False), unsafe_allow_html=True)
             st.caption(f"{len(df_exib)} registros")
+
+            st.divider()
+            _df_doc_hist = df_hist.drop(columns=["tipo_badge"], errors="ignore")
+            _doc_path_hist = gerar_relatorio_historico(_periodo_sel_hist, _df_doc_hist)
+            with open(_doc_path_hist, "rb") as _f:
+                st.download_button(
+                    "Baixar Relatório (DOCX)",
+                    _f.read(),
+                    file_name=_doc_path_hist.name,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="dl_historico",
+                )
