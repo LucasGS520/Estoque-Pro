@@ -39,6 +39,7 @@ from services.orcamento_service import (
     deletar_orcamento,
     enviar_para_aprovacao,
     formatar_telefone_wame,
+    gerar_mensagem_aprovacao,
     gerar_mensagem_whatsapp,
     get_fornecedores_para_item_orcamento,
     get_fornecedores_para_solicitacao,
@@ -458,20 +459,18 @@ def _dialog_resumo_compra(orc_enc: Orcamento) -> None:
     )
     st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
-    if st.button("📄 Gerar documento DOCX", type="secondary", use_container_width=True, key="btn_gerar_docx_compra"):
-        try:
-            _path = gerar_documento_cotacao(orc_enc)
-            with open(_path, "rb") as _f:
-                st.download_button(
-                    "⬇️ Baixar documento",
-                    _f,
-                    file_name=_path.name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True,
-                    key="btn_download_docx_compra",
-                )
-        except Exception as _e:
-            st.error(f"Erro ao gerar documento: {_e}", icon="⚠️")
+    try:
+        _docx_bytes_compra, _docx_name_compra = _bytes_docx_orcamento(orc_enc.id)
+        st.download_button(
+            "Baixar Orçamento (DOCX)",
+            data=_docx_bytes_compra,
+            file_name=_docx_name_compra,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+            key="btn_download_docx_compra",
+        )
+    except Exception as _e:
+        st.error(f"Erro ao gerar documento: {_e}", icon="⚠️")
 
 
 # ===========================================================================
@@ -554,9 +553,6 @@ if tab_sel == "Painel":
                     key="btn_ver_compra",
                 ):
                     _dialog_resumo_compra(_ultimo_encerrado)
-            if st.button("Ver Histórico completo", use_container_width=False, key="btn_ver_historico_enc"):
-                st.session_state["orc_tab"] = "Histórico"
-                st.rerun()
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         st.info(
@@ -742,13 +738,17 @@ if tab_sel == "Painel":
                     except ValueError as e:
                         st.error(str(e), icon="⚠️")
 
-        # Link para o diretor
         if orc.status == "ENVIADO_APROVACAO":
-            link_aprov = f"{APP_BASE_URL}/Aprovacao_Orcamento?id={orc.id}"
+            _link_aprov = f"{APP_BASE_URL}/Aprovacao_Orcamento?id={orc.id}"
+            _msg_aprov = gerar_mensagem_aprovacao(orc, _periodo_label, _link_aprov)
+            _wame_aprov = f"https://wa.me/?text={quote_plus(_msg_aprov)}"
             st.info(
-                f"Orçamento aguardando aprovação. Envie o link ao diretor:  \n**{link_aprov}**",
+                "Orçamento aguardando aprovação. Compartilhe o link com o responsável pela decisão.",
                 icon="🔗",
             )
+            st.link_button("📱 Enviar via WhatsApp", _wame_aprov, use_container_width=False)
+            st.caption("Link direto para aprovação:")
+            st.code(_link_aprov, language=None)
 
 
 # ===========================================================================

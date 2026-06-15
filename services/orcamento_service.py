@@ -1001,6 +1001,22 @@ def gerar_mensagem_whatsapp(
     )
 
 
+def gerar_mensagem_aprovacao(
+    orc: "Orcamento",
+    periodo_label: str,
+    link_aprovacao: str,
+) -> str:
+    """Gera o texto padronizado de encaminhamento de orçamento para aprovação via WhatsApp."""
+    return (
+        f"Olá!\n\n"
+        f"O orçamento *{orc.numero} v{orc.versao}* referente ao período de "
+        f"*{periodo_label}* está pronto para revisão e aprovação.\n\n"
+        f"Acesse o link abaixo para ver os detalhes e registrar a decisão:\n"
+        f"{link_aprovacao}\n\n"
+        f"Obrigado!"
+    )
+
+
 def get_fornecedores_para_solicitacao(
     session: Session, orc_id: int
 ) -> dict[int, dict]:
