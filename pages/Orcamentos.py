@@ -1,4 +1,4 @@
-"""Tela da camada de Orçamentos.
+﻿"""Tela da camada de Orçamentos.
 
 Gerencia o ciclo de cotação, comparação e aprovação a partir da Lista Final
 de Compras aprovada na camada anterior (Compras). Não recalcula análise de
@@ -449,7 +449,7 @@ def _dialog_resumo_compra(orc_enc: Orcamento) -> None:
 
     for _forn, _rows in _grupos.items():
         st.markdown(f"#### 🏪 {_forn}")
-        st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, width='stretch')
 
     st.divider()
     st.markdown(

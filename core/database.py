@@ -84,6 +84,19 @@ def run_schema_migrations(engine):
             status VARCHAR(20) NOT NULL DEFAULT 'ENVIADO'
         )
         """,
+        # Fase 8: devoluções de material (novo fluxo pendente→reintegrada/descartada)
+        """
+        CREATE TABLE IF NOT EXISTS devolucoes_material (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES itens(id),
+            setor_id INTEGER REFERENCES setores(id),
+            quantidade INTEGER NOT NULL,
+            motivo TEXT,
+            status VARCHAR(20) NOT NULL DEFAULT 'pendente',
+            criado_em DATETIME,
+            processado_em DATETIME
+        )
+        """,
     ]
     with engine.connect() as conn:
         for stmt in new_columns:

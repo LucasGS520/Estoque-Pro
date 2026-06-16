@@ -437,14 +437,17 @@ with st.container(border=True):
         qtd_novo = st.number_input("Quantidade *", min_value=1, value=1, step=1, key="inp_novo_qtd")
 
     obs_novo = st.text_input(
-        "Observação / Justificativa",
+        "Observação / Justificativa *",
         placeholder="Para que será usado? Há urgência? Referência de onde encontrar?",
         key="inp_novo_obs",
+        help="Obrigatório para itens não cadastrados.",
     )
 
     if st.button("＋ Adicionar ao Pedido", type="primary", key="btn_add_novo"):
         if not nome_novo.strip():
             st.error("Informe o nome do item.")
+        elif not obs_novo.strip():
+            st.error("A justificativa é obrigatória para itens não cadastrados. Explique para que será usado e se há urgência.")
         else:
             st.session_state["sol_itens"].append({
                 "tipo": "Novo",
@@ -570,6 +573,19 @@ if setor_id is not None and _ciclo_check is not None:
             else:
                 st.session_state["sol_sem_necessidade"] = True
                 st.rerun()
+
+if submitted:
+    # Revalida itens novos: justificativa obrigatória mesmo após edição na revisão
+    itens_sem_justificativa = [
+        item["nome"]
+        for idx, item in enumerate(itens_lista)
+        if item.get("item_id") is None
+        and not (st.session_state.get(f"obs_{idx}", item.get("observacao") or "")).strip()
+    ]
+    if itens_sem_justificativa:
+        for nome_faltante in itens_sem_justificativa:
+            st.error(f"Justificativa obrigatória para o item novo: **{nome_faltante}**. Preencha o campo 'Observação' na revisão acima.")
+        submitted = False
 
 if submitted:
     itens_create = [

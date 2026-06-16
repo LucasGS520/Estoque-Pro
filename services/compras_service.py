@@ -868,6 +868,27 @@ def get_periodos_com_atividade(session: Session) -> list[datetime.date]:
     return sorted(periodos, reverse=True)
 
 
+def get_count_pedidos_sem_triagem(session: Session) -> int:
+    """Conta SolicitacaoMaterial ainda não triados (status='pendente') no ciclo ativo."""
+    ciclo = (
+        session.query(CicloSolicitacaoMaterial)
+        .filter(CicloSolicitacaoMaterial.status == "aberto")
+        .order_by(CicloSolicitacaoMaterial.id.desc())
+        .first()
+    )
+    if not ciclo:
+        return 0
+    return (
+        session.query(func.count(SolicitacaoMaterial.id))
+        .join(SolicitacaoPedido, SolicitacaoMaterial.pedido_id == SolicitacaoPedido.id)
+        .filter(
+            SolicitacaoPedido.ciclo_id == ciclo.id,
+            SolicitacaoMaterial.status == "pendente",
+        )
+        .scalar() or 0
+    )
+
+
 def resetar_quantidades_consolidacao(session: Session, periodo: datetime.date) -> int:
     """Zera as quantidades finais definidas manualmente na consolidação do período.
 

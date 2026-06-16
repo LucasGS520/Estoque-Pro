@@ -1,4 +1,4 @@
-""" Tela da camada de Compras — governança da necessidade de compra.
+﻿""" Tela da camada de Compras — governança da necessidade de compra.
 
 Fluxo: seleção de período → solicitações (formulário externo /solicitar) →
 classificar → consolidar → revisar painel → lista final.
@@ -499,7 +499,7 @@ if aba == "Painel de Reposição":
                     "Fornecedor": r.fornecedor_sugerido or "—",
                     "Valor Est.": fmt_brl(r.valor_estimado) if r.valor_estimado else "—",
                 })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 # =============================================================================
@@ -1567,7 +1567,7 @@ elif aba == "Consolidação":
             }
             for info in lista_final_info
         ]
-        st.dataframe(pd.DataFrame(rows_final), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows_final), width='stretch', hide_index=True)
 
         df_docx = pd.DataFrame([
             {

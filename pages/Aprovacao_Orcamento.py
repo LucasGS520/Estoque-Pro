@@ -1,4 +1,4 @@
-"""Página de aprovação de orçamento — acessível pelo diretor via link direto.
+﻿"""Página de aprovação de orçamento — acessível pelo diretor via link direto.
 
 Recebe o parâmetro `id` na URL (ex: /Aprovacao_Orcamento?id=1).
 Sem sidebar — mesma filosofia do Solicitar.py.
@@ -251,7 +251,7 @@ for item in sorted_itens:
             }
             for c in sorted(item.cotacoes, key=lambda c: c.total_calculado)
         ]
-        st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, width='stretch')
     else:
         st.caption("_Sem cotações registradas._")
 

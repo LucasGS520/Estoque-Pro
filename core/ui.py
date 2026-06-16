@@ -313,9 +313,13 @@ def status_badge(status: str) -> str:
     """Retorna HTML de badge para o status de um item de estoque."""
     _MAP: dict[str, tuple[str, str, str]] = {
         "ok":                  ("#DCFCE7", "#16A34A", "OK"),
-        "comprar":             ("#FEE2E2", "#E10600", "Comprar"),
-        "zerado":              ("#FEF3C7", "#F59E0B", "Zerado"),
-        "sem_minimo_definido": ("#F4F4F5", "#737373", "Sem Mínimo"),
+        "abaixo_minimo":       ("#FEF3C7", "#92400E", "Abaixo do Mínimo"),
+        "abaixo_ideal":        ("#FEFCE8", "#92400E", "Abaixo do Ideal"),
+        "zerado":              ("#FEE2E2", "#DC2626", "Zerado"),
+        "sem_parametro":       ("#F4F4F5", "#737373", "Sem Parâmetro"),
+        # aliases legados
+        "comprar":             ("#FEF3C7", "#92400E", "Abaixo do Mínimo"),
+        "sem_minimo_definido": ("#F4F4F5", "#737373", "Sem Parâmetro"),
     }
     bg, fg, label = _MAP.get(status, ("#F4F4F5", "#737373", status))
     return (
@@ -323,6 +327,22 @@ def status_badge(status: str) -> str:
         f"border-radius:4px;font-size:12px;font-weight:500;"
         f"display:inline-block;line-height:1.6;'>{label}</span>"
     )
+
+
+def colorir_linhas_status(row: "pd.Series", campo: str = "status") -> list[str]:
+    """Retorna lista de estilos CSS para Pandas Styler, colorindo por status operacional.
+
+    Aceita tanto valores brutos ('zerado', 'comprar') quanto rótulos de exibição
+    ('Zerado', 'A Comprar'), pois normaliza para minúsculas antes de comparar.
+    """
+    s = str(row.get(campo, "")).lower()
+    if s in ("zerado",):
+        return ["background-color: #ffdddd"] * len(row)
+    if s in ("abaixo_minimo", "abaixo do mínimo", "comprar", "a comprar"):
+        return ["background-color: #fffbcc"] * len(row)
+    if s in ("sem_parametro", "sem parâmetro", "sem_minimo", "sem limite", "sem_limite", "sem_minimo_definido"):
+        return ["background-color: #f5f5f5"] * len(row)
+    return [""] * len(row)
 
 
 def empty_state(icon: str, title: str, description: str = "") -> None:

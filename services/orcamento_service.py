@@ -166,6 +166,15 @@ def get_orcamentos_periodo(session: Session, periodo: datetime.date) -> list[Orc
     )
 
 
+def get_count_orcamentos_aguardando(session: Session) -> int:
+    """Conta orçamentos aguardando decisão do diretor (ENVIADO_APROVACAO ou DEVOLVIDO_REVISAO)."""
+    return (
+        session.query(func.count(Orcamento.id))
+        .filter(Orcamento.status.in_(["ENVIADO_APROVACAO", "DEVOLVIDO_REVISAO"]))
+        .scalar() or 0
+    )
+
+
 def get_todos_periodos_orcamento(session: Session) -> list[datetime.date]:
     """Retorna os períodos que já possuem algum orçamento, do mais recente ao mais antigo."""
     rows = (

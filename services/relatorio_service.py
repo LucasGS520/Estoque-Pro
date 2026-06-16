@@ -89,6 +89,7 @@ def historico_movimentacoes(
     session: Session,
     item_id: Optional[int] = None,
     tipo: Optional[str] = None,
+    setor_id: Optional[int] = None,
     limit: int = 200,
     data_inicio: Optional[datetime.date] = None,
     data_fim: Optional[datetime.date] = None,
@@ -103,6 +104,8 @@ def historico_movimentacoes(
         q = q.filter(Movimentacao.item_id == item_id)
     if tipo:
         q = q.filter(Movimentacao.tipo == tipo)
+    if setor_id:
+        q = q.filter(Movimentacao.setor_id == setor_id)
     if data_inicio is not None or data_fim is not None:
         dt_ini, dt_fim = _dt_range(
             data_inicio or tempo.hoje().replace(day=1),
@@ -130,6 +133,7 @@ def historico_movimentacoes(
         for m in movs
     ]
     return pd.DataFrame(rows)
+
 
 
 def consumo_por_setor(
@@ -338,6 +342,7 @@ def get_kpis_consumo(
         "item_mais_consumido": max(item_consumo, key=item_consumo.get) if item_consumo else "—",
         "setor_mais_consumiu": max(setor_consumo, key=setor_consumo.get) if setor_consumo else "—",
         "pct_sem_setor": round(sem_setor / len(saidas) * 100, 1) if saidas else 0.0,
+        "n_movimentacoes": len(saidas),
     }
 
 
@@ -348,11 +353,12 @@ def get_timeline_consumo(
     categoria_id: Optional[int] = None,
     setor_id: Optional[int] = None,
     item_id: Optional[int] = None,
+    granularidade: str = "mes",
 ) -> pd.DataFrame:
-    """Timeline mensal enriquecida para o gráfico principal do painel Consumo Mensal.
+    """Timeline de consumo para o gráfico de linha do painel Consumo × Reposição.
 
-    Além de total_saida/total_entrada, retorna n_movimentacoes, top_item e
-    top_setor por mês para uso nos tooltips do gráfico.
+    granularidade='mes'  → uma linha por mês  (chave 'YYYY-MM')
+    granularidade='dia'  → uma linha por dia   (chave 'YYYY-MM-DD')
     """
     COLS = ["mes", "total_saida", "total_entrada", "n_movimentacoes", "top_item", "top_setor"]
     dt_ini, dt_fim = _dt_range(data_inicio, data_fim)
@@ -380,12 +386,13 @@ def get_timeline_consumo(
     if not movs:
         return pd.DataFrame(columns=COLS)
 
-    meses: dict[str, dict] = {}
+    fmt = "%Y-%m-%d" if granularidade == "dia" else "%Y-%m"
+    buckets: dict[str, dict] = {}
     for m in movs:
-        mes = m.criado_em.strftime("%Y-%m")
-        if mes not in meses:
-            meses[mes] = {"saida": 0, "entrada": 0, "n": 0, "itens": {}, "setores": {}}
-        d = meses[mes]
+        chave = m.criado_em.strftime(fmt)
+        if chave not in buckets:
+            buckets[chave] = {"saida": 0, "entrada": 0, "n": 0, "itens": {}, "setores": {}}
+        d = buckets[chave]
         d["n"] += 1
         if m.tipo == "saida":
             d["saida"] += m.quantidade
@@ -397,9 +404,9 @@ def get_timeline_consumo(
             d["entrada"] += m.quantidade
 
     rows = []
-    for mes, d in sorted(meses.items()):
+    for chave, d in sorted(buckets.items()):
         rows.append({
-            "mes": mes,
+            "mes": chave,
             "total_saida": d["saida"],
             "total_entrada": d["entrada"],
             "n_movimentacoes": d["n"],
