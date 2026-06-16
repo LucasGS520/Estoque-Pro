@@ -10,7 +10,7 @@ import streamlit as st
 from core.database import get_session_factory
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from core.ui import _CSS, _LOGO, section_title
-from services.ciclo_service import get_ciclo_por_periodo, marcar_setor_respondido
+from services.ciclo_service import get_participante_por_token, marcar_setor_respondido
 from services.compras_service import criar_pedido_solicitacao, get_pedidos_setor_periodo
 from services.estoque_service import get_all_itens, get_setores
 
@@ -93,41 +93,45 @@ with SessionLocal() as _s:
         for i in _itens_raw
     ]
 
-_hoje_sol = tempo.hoje()
-periodo_sel = datetime.date(_hoje_sol.year, _hoje_sol.month, 1)
-periodo_label_sol = f"{MESES_PT[_hoje_sol.month]}/{_hoje_sol.year}"
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
 
 # ---------------------------------------------------------------------------
-# Verificação do ciclo — bloqueia o formulário se não houver ciclo aberto e válido
+# Token gate — único caminho de acesso ao formulário
 # ---------------------------------------------------------------------------
 
-with SessionLocal() as _sc:
-    _ciclo_check = get_ciclo_por_periodo(_sc, periodo_sel)
-    if _ciclo_check is not None:
-        _ciclo_status = _ciclo_check.status
-        _ciclo_prazo = _ciclo_check.prazo_resposta_em
-    else:
-        _ciclo_status = None
-        _ciclo_prazo = None
+def _exibir_link_invalido():
+    st.markdown(
+        "<div style='text-align:center;padding:48px 24px;'>"
+        "<div style='font-size:48px;margin-bottom:16px;'>🔗</div>"
+        "<h3 style='color:#262626;margin:0 0 8px;'>Link inválido</h3>"
+        "<p style='color:#737373;font-size:15px;margin:0;'>Este link não é válido ou já expirou. "
+        "Solicite um novo link ao responsável pelo setor de compras.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+_token_param = st.query_params.get("token")
+if not _token_param:
+    _exibir_link_invalido()
+
+with SessionLocal() as _stk:
+    _part = get_participante_por_token(_stk, _token_param)
+    if _part is None:
+        _exibir_link_invalido()
+    # Extrai dados enquanto a sessão está aberta (evita DetachedInstanceError)
+    _ciclo_status  = _part.ciclo.status
+    _ciclo_prazo   = _part.ciclo.prazo_resposta_em
+    periodo_sel    = _part.ciclo.periodo_referencia
+    _setor_fixo_id = _part.setor_id
+    _ciclo_check   = True  # sentinela: token válido, ciclo encontrado
+
+_setor_fixo_nome = next((nome for sid, nome in setores if sid == _setor_fixo_id), None)
+periodo_label_sol = f"{MESES_PT[periodo_sel.month]}/{periodo_sel.year}"
 
 _agora = tempo.agora()
 _prazo_vencido = _ciclo_prazo is not None and _ciclo_prazo < _agora
 _formulario_bloqueado = _ciclo_status != "aberto" or _prazo_vencido
-
-# Parâmetro de setor pré-definido vindo da URL (?setor=ID)
-_setor_param = st.query_params.get("setor")
-_setor_fixo_id: int | None = None
-_setor_fixo_nome: str | None = None
-if _setor_param:
-    try:
-        _sid = int(_setor_param)
-        _match = next((nome for sid, nome in setores if sid == _sid), None)
-        if _match:
-            _setor_fixo_id = _sid
-            _setor_fixo_nome = _match
-    except (ValueError, TypeError):
-        pass
 
 # ---------------------------------------------------------------------------
 # Cabeçalho — fundo escuro com logo (padrão da sidebar)

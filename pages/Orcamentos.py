@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from core import tempo
+from core.auth import require_admin
 from core.config import APP_BASE_URL
 from core.database import get_session_factory
 from core.models import CotacaoOrcamento, ItemListaCompra, ItemOrcamento, Orcamento
@@ -59,6 +60,7 @@ from services.orcamento_service import (
 from documents.orcamento import gerar_documento_cotacao
 
 setup_page("Orçamentos", "💰")
+require_admin()
 page_header("Orçamentos", subtitle="Cotação, comparação e aprovação da compra a partir da Lista Final.")
 
 SessionLocal = get_session_factory()
@@ -739,7 +741,7 @@ if tab_sel == "Painel":
                         st.error(str(e), icon="⚠️")
 
         if orc.status == "ENVIADO_APROVACAO":
-            _link_aprov = f"{APP_BASE_URL}/Aprovacao_Orcamento?id={orc.id}"
+            _link_aprov = f"{APP_BASE_URL}/Aprovacao_Orcamento?token={orc.token_aprovacao}"
             _msg_aprov = gerar_mensagem_aprovacao(orc, _periodo_label, _link_aprov)
             _wame_aprov = f"https://wa.me/?text={quote_plus(_msg_aprov)}"
             st.info(

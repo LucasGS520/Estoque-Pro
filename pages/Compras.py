@@ -13,11 +13,11 @@ from collections import defaultdict
 import pandas as pd
 import streamlit as st
 
+from core.auth import require_admin
 from core.database import get_session_factory
 from core.ui import (
     empty_state,
     fmt_brl,
-    gerar_link_formulario_generico,
     page_header,
     section_title,
     setup_page,
@@ -67,6 +67,7 @@ from services.estoque_service import atualizar_fornecedores_item, get_all_itens,
 from services.fornecedor_service import get_all_fornecedores
 
 setup_page("Análise de Compras", "🛒")
+require_admin()
 page_header("Análise de Compras", subtitle="Preparação inteligente da lista de compras.")
 
 # ── CSS: st.radio como abas (mesmo padrão de todas as outras páginas) ──────────
@@ -851,10 +852,6 @@ elif aba == "Solicitações e Pendências":
                                 st.rerun()
                             except ValueError as _rve:
                                 st.error(str(_rve))
-
-        # ── Link avulso ───────────────────────────────────────────────────────
-        st.caption("Link avulso (sem setor pré-definido):")
-        st.code(gerar_link_formulario_generico(), language=None)
 
         # ── Setores não incluídos neste ciclo ────────────────────────────────
         with SessionLocal() as _snc:

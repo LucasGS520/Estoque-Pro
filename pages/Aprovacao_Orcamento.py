@@ -1,6 +1,6 @@
 ﻿"""Página de aprovação de orçamento — acessível pelo diretor via link direto.
 
-Recebe o parâmetro `id` na URL (ex: /Aprovacao_Orcamento?id=1).
+Recebe o parâmetro `token` na URL (ex: /Aprovacao_Orcamento?token=...).
 Sem sidebar — mesma filosofia do Solicitar.py.
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 from core.database import get_session_factory
 from core.models import ItemOrcamento as _ItemOrc, Orcamento as _Orc
 from core.ui import _CSS, _LOGO, fmt_brl
-from services.orcamento_service import get_orcamento_por_id, registrar_decisao_diretor
+from services.orcamento_service import get_orcamento_por_token, registrar_decisao_diretor
 
 # ── CSS + sidebar oculta ──────────────────────────────────────────────────────
 st.markdown(_CSS, unsafe_allow_html=True)
@@ -62,36 +62,32 @@ def _logo_b64() -> str | None:
     return None
 
 
-# ── Parâmetro id ──────────────────────────────────────────────────────────────
-_id_param = st.query_params.get("id")
+# ── Token gate ────────────────────────────────────────────────────────────────
+_token_param = st.query_params.get("token")
 
-if not _id_param:
+if not _token_param:
     st.markdown(
         "<div style='text-align:center;padding:64px 0;'>"
         "<div style='font-size:40px;'>🔗</div>"
         "<p style='font-size:18px;font-weight:600;margin:12px 0 6px;'>Link inválido</p>"
-        "<p style='color:#737373;'>Nenhum orçamento foi especificado na URL.</p>"
+        "<p style='color:#737373;'>Este link não é válido ou já expirou.</p>"
         "</div>",
         unsafe_allow_html=True,
     )
     st.stop()
 
-try:
-    orc_id = int(_id_param)
-except ValueError:
-    st.error("Parâmetro `id` inválido.")
-    st.stop()
-
 with SessionLocal() as _s:
-    orc = (
-        _s.query(_Orc)
-        .options(joinedload(_Orc.itens).joinedload(_ItemOrc.cotacoes))
-        .filter(_Orc.id == orc_id)
-        .first()
-    )
+    orc = get_orcamento_por_token(_s, _token_param)
 
 if orc is None:
-    st.error(f"Orçamento #{orc_id} não encontrado.")
+    st.markdown(
+        "<div style='text-align:center;padding:64px 0;'>"
+        "<div style='font-size:40px;'>🔗</div>"
+        "<p style='font-size:18px;font-weight:600;margin:12px 0 6px;'>Link inválido</p>"
+        "<p style='color:#737373;'>Este link não é válido ou já expirou.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 # Carregar itens aprovados para contexto read-only do diretor.
@@ -341,7 +337,7 @@ with _col_btn:
             with SessionLocal() as _sess:
                 registrar_decisao_diretor(
                     _sess,
-                    orcamento_id=orc_id,
+                    orcamento_id=orc.id,
                     decisao=_decisao_val,
                     observacao_diretor=_obs.strip() if _obs.strip() else None,
                     itens_reprovados=_reprovados if _reprovados else None,

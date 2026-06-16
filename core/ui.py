@@ -492,6 +492,12 @@ def gerar_link_formulario(setor_id: int) -> str:
     return f"{APP_BASE_URL}/solicitar?setor={setor_id}"
 
 
+def gerar_link_formulario_token(token: str) -> str:
+    """Retorna a URL pública do formulário usando token opaco (preferido sobre ?setor=ID)."""
+    from core.config import APP_BASE_URL
+    return f"{APP_BASE_URL}/solicitar?token={token}"
+
+
 def gerar_link_formulario_generico() -> str:
     """Retorna a URL do formulário sem setor pré-definido (link manual)."""
     from core.config import APP_BASE_URL

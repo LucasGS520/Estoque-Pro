@@ -69,6 +69,9 @@ def run_schema_migrations(engine):
         "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN motivo_falha VARCHAR(200)",
         # Fase 7: website do fornecedor (URL do site, suporta {query} para busca)
         "ALTER TABLE fornecedores ADD COLUMN website VARCHAR(500)",
+        # Fase 8 — deploy interno: tokens opacos para links públicos
+        "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN token TEXT",
+        "ALTER TABLE orcamentos ADD COLUMN token_aprovacao TEXT",
     ]
     # Tabelas novas (CREATE TABLE IF NOT EXISTS é idempotente no SQLite)
     new_tables = [
@@ -110,6 +113,17 @@ def run_schema_migrations(engine):
         for stmt in new_tables:
             conn.execute(text(stmt))
             conn.commit()
+
+        # Índices únicos para tokens (WHERE token IS NOT NULL — não conflita com NULLs antigos)
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_ciclo_setor_token "
+            "ON ciclo_solicitacao_setores (token) WHERE token IS NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_orcamento_token_aprovacao "
+            "ON orcamentos (token_aprovacao) WHERE token_aprovacao IS NOT NULL"
+        ))
+        conn.commit()
 
         # Migração de dados: trata estoque_minimo/ideal legados como valores manuais.
         # Só migra linhas onde estoque_minimo_vigente ainda está zerado E estoque_minimo > 0.

@@ -20,6 +20,9 @@ DOCS_DIR = BASE_DIR / "docs"
 # Configurar via variável de ambiente APP_BASE_URL ao fazer deploy.
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
 
+# Senha administrativa — protege as páginas internas do sistema.
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
 # Meta WhatsApp Cloud API — configurar via variáveis de ambiente (não commitar tokens).
 WA_ACCESS_TOKEN       = os.getenv("WA_ACCESS_TOKEN", "")
 WA_PHONE_NUMBER_ID    = os.getenv("WA_PHONE_NUMBER_ID", "")

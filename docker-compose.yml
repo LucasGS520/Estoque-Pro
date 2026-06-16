@@ -1,0 +1,11 @@
+services:
+  estoque-dfeb:
+    build: .
+    container_name: estoque-dfeb
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

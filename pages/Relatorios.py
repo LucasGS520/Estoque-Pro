@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
+from core.auth import require_admin
 from core.database import get_session_factory
 from core.models import Item, Movimentacao
 from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS
@@ -61,6 +62,7 @@ def _fmt_dia(dia_str: str) -> str:
         return dia_str
 
 setup_page("Relatórios", "📈")
+require_admin()
 page_header("Relatórios", subtitle="Consumo histórico por período, categoria, setor e item.")
 
 SessionLocal = get_session_factory()

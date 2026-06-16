@@ -11,6 +11,7 @@ from core import tempo
 
 import streamlit as st
 
+from core.auth import require_admin
 from core.database import get_session_factory
 from core.schemas import SolicitacaoMaterialCreate
 from core.ui import page_header, section_title, setup_page
@@ -18,6 +19,7 @@ from services.compras_service import criar_solicitacao
 from services.estoque_service import get_all_itens, get_setores
 
 setup_page("Pedido de Compra", "📝")
+require_admin()
 page_header(
     "Pedido de Compra",
     subtitle="Registre aqui sua solicitação de materiais para o setor de compras.",

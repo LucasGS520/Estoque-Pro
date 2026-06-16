@@ -10,6 +10,7 @@ CompraAvulsa (incluir_na_lista_final=True) — nunca run_analysis() ou snapshots
 
 import datetime
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -194,6 +195,18 @@ def get_orcamento_por_id(session: Session, orcamento_id: int) -> Optional[Orcame
             joinedload(Orcamento.itens).joinedload(ItemOrcamento.cotacoes),
         )
         .filter(Orcamento.id == orcamento_id)
+        .first()
+    )
+
+
+def get_orcamento_por_token(session: Session, token: str) -> Optional[Orcamento]:
+    """Carrega um orçamento pelo token de aprovação, com itens e cotações."""
+    return (
+        session.query(Orcamento)
+        .options(
+            joinedload(Orcamento.itens).joinedload(ItemOrcamento.cotacoes),
+        )
+        .filter(Orcamento.token_aprovacao == token)
         .first()
     )
 
@@ -617,6 +630,8 @@ def enviar_para_aprovacao(session: Session, orcamento_id: int) -> Orcamento:
             f"Os seguintes itens ainda não possuem cotações registradas: {lista}."
         )
 
+    if not orc.token_aprovacao:
+        orc.token_aprovacao = secrets.token_urlsafe(32)
     orc.status = "ENVIADO_APROVACAO"
     orc.enviado_em = tempo.agora()
     orc.atualizado_em = tempo.agora()

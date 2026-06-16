@@ -8,6 +8,7 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 
+from core.auth import require_admin
 from core.database import get_session_factory
 from core.engine import ItemRecord, ItemStatus, StockAnalyzer
 from core.ui import colorir_linhas_status, setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title
@@ -16,6 +17,7 @@ from services.estoque_service import get_all_itens
 from services.orcamento_service import get_count_orcamentos_aguardando
 
 setup_page("Visão Geral", "📊")
+require_admin()
 page_header("Visão Geral", subtitle="Indicadores gerais e alertas operacionais de estoque.")
 
 SessionLocal = get_session_factory()

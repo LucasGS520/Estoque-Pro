@@ -10,6 +10,7 @@ import re
 import streamlit as st
 import pandas as pd
 
+from core.auth import require_admin
 from core.database import get_session_factory
 from core.ui import colorir_linhas_status, formatar_telefone, setup_page, page_header, section_title
 from services import estoque_service, fornecedor_service, calculos_service
@@ -37,6 +38,7 @@ def _validar_email(email: str) -> bool:
     return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email.strip()))
 
 setup_page("Estoque", "📋")
+require_admin()
 page_header("Estoque", subtitle="Consulta, movimentações e edição de itens, fornecedores e categorias.")
 
 # CSS para dar aparência de abas nativas aos st.radio usados como navegação

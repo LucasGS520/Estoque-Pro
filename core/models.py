@@ -236,6 +236,8 @@ class CicloSolicitacaoSetor(Base):
     notificacao_prazo_proximo_em  = Column(DateTime, nullable=True)
     notificacao_encerramento_em   = Column(DateTime, nullable=True)
     notificacao_feedback_em       = Column(DateTime, nullable=True)
+    # Token opaco para link público do formulário (?token=...)
+    token = Column(String(64), nullable=True, unique=True, index=True)
 
     __table_args__ = (UniqueConstraint("ciclo_id", "setor_id", name="uq_ciclo_setor"),)
 
@@ -386,6 +388,8 @@ class Orcamento(Base):
     enviado_em = Column(DateTime, nullable=True)
     decidido_em = Column(DateTime, nullable=True)
     observacao_diretor = Column(Text, nullable=True)
+    # Token opaco para link de aprovação enviado ao diretor (?token=...)
+    token_aprovacao = Column(String(64), nullable=True, unique=True, index=True)
     criado_em = Column(DateTime, default=tempo.agora)
     atualizado_em = Column(DateTime, default=tempo.agora, onupdate=tempo.agora)
 

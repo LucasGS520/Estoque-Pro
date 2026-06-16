@@ -1,6 +1,7 @@
 """Serviços de gestão do Ciclo Mensal de Solicitações de Materiais."""
 
 import datetime
+import secrets
 
 from core import tempo
 from dataclasses import dataclass
@@ -49,12 +50,16 @@ def _enviar_e_registrar(
     Não faz commit — o chamador é responsável por commitar após processar todos os participantes.
     """
     from services import notificacao_service
-    from core.ui import gerar_link_formulario
+    from core.ui import gerar_link_formulario_token
 
     if not setor.whatsapp:
         participante.falha_envio = True
         participante.motivo_falha = "sem_whatsapp"
         return
+
+    # Garante que o participante tem token antes de enviar o link
+    if not participante.token:
+        participante.token = secrets.token_urlsafe(32)
 
     periodo_label = _periodo_label(periodo_referencia)
     prazo_label = (
@@ -62,7 +67,7 @@ def _enviar_e_registrar(
         if prazo_resposta_em
         else "Em breve"
     )
-    link = gerar_link_formulario(setor.id)
+    link = gerar_link_formulario_token(participante.token)
 
     resultado = notificacao_service.enviar_formulario(
         whatsapp=setor.whatsapp,
@@ -120,6 +125,7 @@ def abrir_ciclo(
             ciclo_id=ciclo.id,
             setor_id=setor.id,
             status="pendente",
+            token=secrets.token_urlsafe(32),
         )
         session.add(participante)
         session.flush()
@@ -276,6 +282,7 @@ def adicionar_setor_ao_ciclo(
         ciclo_id=ciclo_id,
         setor_id=setor_id,
         status="pendente",
+        token=secrets.token_urlsafe(32),
     )
     session.add(participante)
     session.flush()
@@ -542,3 +549,19 @@ def marcar_setor_respondido(
     participante.respondido_em = tempo.agora()
     session.commit()
     return participante
+
+
+def get_participante_por_token(
+    session: Session, token: str
+) -> Optional[CicloSolicitacaoSetor]:
+    """Retorna o CicloSolicitacaoSetor correspondente ao token do link público.
+
+    Carrega o ciclo via joinedload para evitar DetachedInstanceError após fechar a sessão.
+    Retorna None se o token não existir.
+    """
+    return (
+        session.query(CicloSolicitacaoSetor)
+        .options(joinedload(CicloSolicitacaoSetor.ciclo))
+        .filter(CicloSolicitacaoSetor.token == token)
+        .first()
+    )
