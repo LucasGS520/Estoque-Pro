@@ -7,8 +7,13 @@ evitar caminhos duplicados entre app, serviços, documentos e migração.
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Raiz do projeto, calculada de forma relativa para funcionar no app e em CLI.
 BASE_DIR = Path(__file__).parent.parent
+
+# Carrega o .env da raiz do projeto antes de qualquer os.getenv()
+load_dotenv(BASE_DIR / ".env")
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "estoque.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
