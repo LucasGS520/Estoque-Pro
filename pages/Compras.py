@@ -18,6 +18,7 @@ from core.database import get_session_factory
 from core.ui import (
     empty_state,
     fmt_brl,
+    gerar_link_formulario_generico,
     page_header,
     section_title,
     setup_page,
@@ -108,6 +109,32 @@ st.markdown("""
 }
 [data-testid="stRadio"] [role="radiogroup"] > label:hover {
     color: rgba(49, 51, 63, 0.85) !important;
+}
+
+/* Mobile: tabs viram chips que quebram linha */
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #E10600 !important;
+        color: #E10600 !important;
+        background: rgba(225, 6, 0, 0.08) !important;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -852,6 +879,13 @@ elif aba == "Solicitações e Pendências":
                                 st.rerun()
                             except ValueError as _rve:
                                 st.error(str(_rve))
+
+        # ── Link do Formulário de Solicitação ────────────────────────────────
+        _link_form = gerar_link_formulario_generico()
+        st.markdown("---")
+        section_title("Link do Formulário")
+        st.caption("Link direto para o formulário:")
+        st.code(_link_form, language=None)
 
         # ── Setores não incluídos neste ciclo ────────────────────────────────
         with SessionLocal() as _snc:

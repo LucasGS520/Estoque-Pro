@@ -11,7 +11,7 @@ import pandas as pd
 from core.auth import require_admin
 from core.database import get_session_factory
 from core.engine import ItemRecord, ItemStatus, StockAnalyzer
-from core.ui import colorir_linhas_status, setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title
+from core.ui import colorir_linhas_status, setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, PLOTLY_CONFIG
 from services.compras_service import get_count_pedidos_sem_triagem
 from services.estoque_service import get_all_itens
 from services.orcamento_service import get_count_orcamentos_aguardando
@@ -96,7 +96,7 @@ fig = px.bar(
 )
 fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y}<extra></extra>")
 apply_chart_theme(fig, height=320, showlegend=True)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ── Itens críticos ────────────────────────────────────────────────────────────
 criticos = [r for r in results if r.status in (

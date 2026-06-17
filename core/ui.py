@@ -24,6 +24,12 @@ DFEB_COLORS: dict[str, str] = {
     "orange": "#F59E0B",
 }
 
+# ── Config padrão Plotly (sem toolbar) ───────────────────────────────────────
+PLOTLY_CONFIG: dict = {
+    "displayModeBar": False,
+    "responsive": True,
+}
+
 # ── CSS global injetado em cada página ───────────────────────────────────────
 _CSS = """
 <style>
@@ -74,25 +80,33 @@ html, body, [class*="css"], .stApp {
     fill: #FFFFFF !important;
 }
 
-/* ── Controle de REABRIR sidebar quando está colapsada ───────────── */
-/* O ícone "›" fica invisível (svg preto no fundo preto) sem esse fix */
+/* ── Controle de REABRIR sidebar (desktop: seta "›") ─────────────── */
+/* position: fixed tira do fluxo do documento — nunca sobreposto pelo conteúdo */
 [data-testid="stSidebarCollapsedControl"] {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    height: 100vh !important;
     display: flex !important;
+    align-items: center !important;
     visibility: visible !important;
     opacity: 1 !important;
-    z-index: 99999 !important;
+    z-index: 999999 !important;
     pointer-events: all !important;
 }
-[data-testid="stSidebarCollapsedControl"] > div,
-[data-testid="stSidebarCollapsedControl"] button {
+[data-testid="stSidebarCollapsedControl"] > div {
     background: #0A0A0A !important;
     border-radius: 0 6px 6px 0 !important;
     border: 1px solid #262626 !important;
     border-left: none !important;
     box-shadow: 2px 0 8px rgba(0,0,0,0.30) !important;
+    pointer-events: all !important;
 }
 [data-testid="stSidebarCollapsedControl"] button {
+    background: transparent !important;
     color: #EBEBEB !important;
+    pointer-events: all !important;
+    cursor: pointer !important;
 }
 [data-testid="stSidebarCollapsedControl"] svg {
     fill: #EBEBEB !important;
@@ -221,10 +235,20 @@ hr {
 
 /* ── Chrome do Streamlit ─────────────────────────────────────────────── */
 footer { display: none !important; }
+/* ── Header mobile (hamburger) ──────────────────────────────────────── */
 header[data-testid="stHeader"] {
     background: transparent !important;
     border-bottom: none !important;
     box-shadow: none !important;
+    z-index: 888888 !important;
+    pointer-events: all !important;
+}
+header[data-testid="stHeader"] button {
+    pointer-events: all !important;
+    cursor: pointer !important;
+}
+header[data-testid="stHeader"] svg {
+    fill: #0A0A0A !important;
 }
 
 /* ── Links de navegação manuais (st.page_link) ───────────────────────── */
@@ -251,6 +275,44 @@ header[data-testid="stHeader"] {
 }
 [data-testid="stPageLink"] a[aria-current="page"] svg {
     fill: #E10600 !important;
+}
+
+/* ── Responsividade Mobile ──────────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Reduzir padding do conteúdo para aproveitar melhor a tela pequena */
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 0.5rem !important;
+    }
+    /* Métricas: fonte menor para caber em tela pequena */
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.3rem !important;
+    }
+    /* Botões: permitir quebra de linha em texto longo */
+    .stButton button {
+        white-space: normal !important;
+        height: auto !important;
+        min-height: 2.5rem !important;
+        line-height: 1.3 !important;
+    }
+    /* Divisor vertical fixo: ocultar em mobile para não bloquear scroll */
+    .dfeb-vert-sep {
+        display: none !important;
+    }
+}
+
+/* ── Separador Cadastro / Edição (visível somente em mobile) ─────────── */
+.dfeb-edit-divider {
+    display: none !important;
+    border: none !important;
+    border-top: 2px solid #E5E5E5 !important;
+    margin: 20px 0 8px !important;
+}
+@media (max-width: 768px) {
+    .dfeb-edit-divider {
+        display: block !important;
+    }
 }
 
 /* ── Ocultar botão de fullscreen em imagens na sidebar ───────────────── */
@@ -451,12 +513,12 @@ def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
             color="#262626",
             size=12,
         ),
-        margin=dict(t=24, r=20, b=36, l=48),
+        margin=dict(t=56 if showlegend else 24, r=20, b=36, l=48),
         showlegend=showlegend,
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=-0.25,
+            y=1.02,
             xanchor="left",
             x=0,
             bgcolor="rgba(0,0,0,0)",

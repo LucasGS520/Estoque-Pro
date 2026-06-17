@@ -16,7 +16,7 @@ import plotly.express as px
 from core.auth import require_admin
 from core.database import get_session_factory
 from core.models import Item, Movimentacao
-from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS
+from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS, PLOTLY_CONFIG
 from documents.relatorio_categoria import gerar_relatorio_categoria
 from documents.relatorio_consumo   import gerar_relatorio_consumo
 from documents.relatorio_historico import gerar_relatorio_historico
@@ -120,6 +120,32 @@ st.markdown("""
 [data-testid="stRadio"] [role="radiogroup"] > label:hover {
     color: rgba(49, 51, 63, 0.85) !important;
 }
+
+/* Mobile: tabs viram chips que quebram linha */
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #E10600 !important;
+        color: #E10600 !important;
+        background: rgba(225, 6, 0, 0.08) !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -197,7 +223,7 @@ if tab_sel == "Consumo × Reposição":
         fig_bar.update_traces(textposition="outside")
         fig_bar.update_yaxes(autorange="reversed")
         apply_chart_theme(fig_bar, height=max(280, len(df_top) * 45), showlegend=False)
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
         # ── Bloco 4 — Gráfico Secundário: Linha temporal ─────────────────────
         if not df_timeline.empty:
@@ -223,7 +249,7 @@ if tab_sel == "Consumo × Reposição":
             )
             fig_line.update_layout(xaxis_type="category")
             apply_chart_theme(fig_line, height=300, showlegend=True)
-            st.plotly_chart(fig_line, use_container_width=True)
+            st.plotly_chart(fig_line, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.divider()
         _doc_path_m = gerar_relatorio_consumo(_periodo_sel_m, kpis, df_timeline)
@@ -276,7 +302,7 @@ elif tab_sel == "Por Categoria":
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
             apply_chart_theme(fig, height=max(320, n_cats * 36))
         fig.update_layout(coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.divider()
         _doc_path_cat = gerar_relatorio_categoria(_periodo_sel_cat, df_cat)
@@ -343,7 +369,7 @@ elif tab_sel == "Por Setor":
         fig.update_traces(textposition="outside", marker_color=bar_colors)
         fig.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
         apply_chart_theme(fig, height=max(280, len(df_setor) * 40))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
         section_title("Detalhamento")
         df_exib = df_setor.rename(columns={
@@ -414,7 +440,7 @@ elif tab_sel == "Por Item":
         fig.update_traces(textposition="outside", marker_color=bar_colors_item)
         fig.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
         apply_chart_theme(fig, height=max(280, len(top_df) * 36))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
         section_title("Detalhamento")
         cols_exib = ["item", "categoria", "total_saida", "num_movimentacoes"]

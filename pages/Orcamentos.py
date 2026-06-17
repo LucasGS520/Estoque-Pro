@@ -121,6 +121,32 @@ st.markdown("""
 [data-testid="stRadio"] [role="radiogroup"] > label:hover {
     color: rgba(49, 51, 63, 0.85) !important;
 }
+
+/* Mobile: tabs viram chips que quebram linha */
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #E10600 !important;
+        color: #E10600 !important;
+        background: rgba(225, 6, 0, 0.08) !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -748,7 +774,7 @@ if tab_sel == "Painel":
                 "Orçamento aguardando aprovação. Compartilhe o link com o responsável pela decisão.",
                 icon="🔗",
             )
-            st.link_button("📱 Enviar via WhatsApp", _wame_aprov, use_container_width=False)
+            st.link_button("Enviar via WhatsApp", _wame_aprov, use_container_width=False)
             st.caption("Link direto para aprovação:")
             st.code(_link_aprov, language=None)
 
