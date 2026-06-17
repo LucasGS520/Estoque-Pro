@@ -397,6 +397,7 @@ def _modal_editar_cotacao(cotacao_id: int) -> None:
         )
         data_edit = st.date_input(
             "Data da cotação *", value=_data, key=f"ec_data_{cotacao_id}",
+            format="DD/MM/YYYY",
         )
 
     c3, c4, c5 = st.columns(3)
@@ -775,7 +776,7 @@ if tab_sel == "Painel":
                 icon="🔗",
             )
             st.link_button("Enviar via WhatsApp", _wame_aprov, use_container_width=False)
-            st.caption("Link direto para aprovação:")
+            st.caption("Link da Aprovação de Orçamento:")
             st.code(_link_aprov, language=None)
 
 
@@ -1110,6 +1111,7 @@ elif tab_sel == "Cotações":
                 "Data da cotação *",
                 value=tempo.hoje(),
                 key=f"cot_data_{item_sel_id}_{_fv}",
+                format="DD/MM/YYYY",
             )
 
         c3, c4, c5 = st.columns(3)
@@ -1186,7 +1188,7 @@ elif tab_sel == "Cotações":
     st.divider()
     section_title("Solicitação a fornecedores")
 
-    _periodo_label_sol = periodo.strftime("%B/%Y").capitalize()
+    _periodo_label_sol = f"{_MESES_PT[periodo.month]}/{periodo.year}"
 
     with SessionLocal() as _s_sol:
         _grupos_sol = get_fornecedores_para_solicitacao(_s_sol, _orc_id)

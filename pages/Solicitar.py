@@ -10,7 +10,7 @@ import streamlit as st
 from core.database import get_session_factory
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from core.ui import _CSS, _LOGO, section_title
-from services.ciclo_service import get_participante_por_token, marcar_setor_respondido
+from services.ciclo_service import get_ciclo_ativo, get_participante_por_token, marcar_setor_respondido
 from services.compras_service import criar_pedido_solicitacao, get_pedidos_setor_periodo
 from services.estoque_service import get_all_itens, get_setores
 
@@ -32,9 +32,6 @@ MESES_PT = {
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
 }
 
-
-def _periodo_label(d: datetime.date) -> str:
-    return f"{MESES_PT[d.month]}/{d.year}"
 
 
 def _opcoes_periodo() -> list[datetime.date]:
@@ -96,10 +93,11 @@ with SessionLocal() as _s:
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
 
 # ---------------------------------------------------------------------------
-# Token gate — único caminho de acesso ao formulário
+# Resolução de identidade: token (setor fixo) ou acesso direto (setor pelo form)
 # ---------------------------------------------------------------------------
 
 def _exibir_link_invalido():
+    """Exibida apenas quando um token é fornecido mas não corresponde a nenhum ciclo."""
     st.markdown(
         "<div style='text-align:center;padding:48px 24px;'>"
         "<div style='font-size:48px;margin-bottom:16px;'>🔗</div>"
@@ -112,19 +110,33 @@ def _exibir_link_invalido():
     st.stop()
 
 _token_param = st.query_params.get("token")
-if not _token_param:
-    _exibir_link_invalido()
 
-with SessionLocal() as _stk:
-    _part = get_participante_por_token(_stk, _token_param)
-    if _part is None:
-        _exibir_link_invalido()
-    # Extrai dados enquanto a sessão está aberta (evita DetachedInstanceError)
-    _ciclo_status  = _part.ciclo.status
-    _ciclo_prazo   = _part.ciclo.prazo_resposta_em
-    periodo_sel    = _part.ciclo.periodo_referencia
-    _setor_fixo_id = _part.setor_id
-    _ciclo_check   = True  # sentinela: token válido, ciclo encontrado
+if _token_param:
+    # Caminho com token: setor e período identificados pelo ciclo vinculado
+    with SessionLocal() as _stk:
+        _part = get_participante_por_token(_stk, _token_param)
+        if _part is None:
+            _exibir_link_invalido()
+        _ciclo_status  = _part.ciclo.status
+        _ciclo_prazo   = _part.ciclo.prazo_resposta_em
+        periodo_sel    = _part.ciclo.periodo_referencia
+        _setor_fixo_id = _part.setor_id
+        _ciclo_check   = _part.ciclo.id  # id do ciclo para marcar_setor_respondido
+else:
+    # Caminho direto: setor escolhido no formulário, período determinado pelo ciclo aberto
+    _setor_fixo_id = None
+    with SessionLocal() as _stk:
+        _ciclo_obj = get_ciclo_ativo(_stk)
+        if _ciclo_obj is not None:
+            _ciclo_status = _ciclo_obj.status
+            _ciclo_prazo  = _ciclo_obj.prazo_resposta_em
+            _ciclo_check  = _ciclo_obj.id
+            periodo_sel   = _ciclo_obj.periodo_referencia
+        else:
+            _ciclo_status = None
+            _ciclo_prazo  = None
+            _ciclo_check  = None
+            periodo_sel   = _opcoes_periodo()[0]
 
 _setor_fixo_nome = next((nome for sid, nome in setores if sid == _setor_fixo_id), None)
 periodo_label_sol = f"{MESES_PT[periodo_sel.month]}/{periodo_sel.year}"
@@ -571,7 +583,7 @@ if setor_id is not None and _ciclo_check is not None:
         ):
             try:
                 with SessionLocal() as _sn:
-                    marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
+                    marcar_setor_respondido(_sn, _ciclo_check, setor_id, sem_solicitacao=True)
             except ValueError as _exc_sn:
                 st.warning(str(_exc_sn))
             else:

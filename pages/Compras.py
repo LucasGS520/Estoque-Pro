@@ -883,8 +883,7 @@ elif aba == "Solicitações e Pendências":
         # ── Link do Formulário de Solicitação ────────────────────────────────
         _link_form = gerar_link_formulario_generico()
         st.markdown("---")
-        section_title("Link do Formulário")
-        st.caption("Link direto para o formulário:")
+        st.caption("Link do Formulário:")
         st.code(_link_form, language=None)
 
         # ── Setores não incluídos neste ciclo ────────────────────────────────
