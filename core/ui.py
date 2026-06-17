@@ -80,34 +80,6 @@ html, body, [class*="css"], .stApp {
     fill: #FFFFFF !important;
 }
 
-/* ── Controle de REABRIR sidebar (desktop: seta "›") ─────────────── */
-/* Não forçamos display/visibility — o Streamlit controla quando este
-   elemento aparece (apenas quando o sidebar está fechado). Garantimos
-   apenas z-index, pointer-events e aparência correta. */
-[data-testid="stSidebarCollapsedControl"] {
-    z-index: 999999 !important;
-    pointer-events: all !important;
-}
-[data-testid="stSidebarCollapsedControl"] > div {
-    background: #0A0A0A !important;
-    border-radius: 0 6px 6px 0 !important;
-    border: 1px solid #262626 !important;
-    border-left: none !important;
-    box-shadow: 2px 0 8px rgba(0,0,0,0.30) !important;
-    pointer-events: all !important;
-}
-[data-testid="stSidebarCollapsedControl"] button {
-    background: transparent !important;
-    color: #EBEBEB !important;
-    pointer-events: all !important;
-    cursor: pointer !important;
-}
-[data-testid="stSidebarCollapsedControl"] svg {
-    fill: #EBEBEB !important;
-    color: #EBEBEB !important;
-    stroke: #EBEBEB !important;
-}
-
 /* ── Botões primários ────────────────────────────────────────────────── */
 button[kind="primary"] {
     background-color: #E10600 !important;
