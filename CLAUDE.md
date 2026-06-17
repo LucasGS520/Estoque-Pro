@@ -2,18 +2,48 @@
 
 Este arquivo fornece orientações para o Claude Code (claude.ai/code) ao trabalhar com o código deste repositório.
 
-## Comandos
+## 🚀 Ambiente de Produção
+
+O sistema está **em produção** em uma VPS:
+- **URL**: http://201.76.56.247/
+- **Status**: Em operação 24/7
+- **Dados**: Sincronizados com banco de dados SQLite na VPS
+
+**Importante:** Todas as mudanças, diagnósticos e navegação serão executadas e validadas no sistema rodando nessa VPS.
+
+## Ambiente Local
+
+### Comandos de Desenvolvimento
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Executar o app
+# Executar o app localmente
 streamlit run app.py
 # Disponível em http://localhost:8501
 ```
 
+**Nota:** O ambiente local é para desenvolvimento e testes apenas. O sistema em produção roda na VPS.
+
 Nenhuma suíte de testes ou ferramenta de lint está configurada.
+
+## Acesso à VPS e Deploy
+
+- **Host VPS**: 201.76.56.247
+- **Aplicação**: Streamlit rodando via Docker Compose
+- **Banco de dados**: SQLite persistente em `/data/estoque.db` dentro do container
+- **Configuração Docker**: Arquivo `docker-compose.yml` + `Dockerfile` + `nginx/nginx.conf`
+
+### Workflow de Mudanças
+1. Desenvolver e testar localmente em `http://localhost:8501`
+2. Fazer commit das mudanças no repositório
+3. Deploy na VPS: sincronizar código e reiniciar containers
+4. Validação: testes executados diretamente na URL http://201.76.56.247/
+
+### Links Públicos (gerados dinamicamente)
+- Formulário de Solicitação (setores): `$APP_BASE_URL/Solicitar`
+- Aprovação de Orçamentos (diretor): `$APP_BASE_URL/Aprovacao_Orcamento?id={id}`
 
 ## Arquitetura
 
@@ -117,13 +147,13 @@ with SessionLocal() as session:
 **Regras obrigatórias de economia (NÃO IGNORAR)**
 1) **NÃO liste árvore inteira do projeto (evite `tree`, `ls -R`, etc.)**. Se precisar, liste apenas pastas-alvo da FASE.
 2) **NÃO leia arquivos completos.** Leia no máximo 120 linhas por arquivo (ou trechos específicos). Se precisar de mais contextualização, peça antes.
-3) **NÃO execute ações, mudanças ou qualquer outro tipo de refatoração em UI/UX, lógica ou que possam afetar diretamente no fluxo de navegação do usuario**, a menos que não tenha sido claramente aprovado ou bem planejado.
-4) Está totalmente liberado **sugerir, propor e recomendar mudanças e melhorias** que possam arrumar ou evoluir o sistema, porém elas devem ser aprovadas e bem explicadas para mim, antes de ocorrer a implementação/execução das mesmas.
-5) Priorize busca (rg/grep) para localizar pontos de mudança antes de abrir arquivos.
+3) **NÃO execute ações, mudanças ou qualquer outro tipo de refatoração em UI/UX, lógica ou que possam afetar diretamente no fluxo de navegação do usuario**, a menos que não tenha sido claramente aprovado e bem planejado.
+4) Está totalmente liberado **sugerir, propor e recomendar mudanças e melhorias** que possam arrumar ou evoluir o sistema, porém elas devem ser aprovadas e bem explicadas antes da implementação/execução.
+5) Priorize busca (grep) para localizar pontos de mudança antes de abrir arquivos.
 6) **Não cole conteúdo integral de arquivos na resposta.** Mostre apenas:
    - arquivos alterados
    - resumo do diff (o que mudou e por quê)
    - comandos executados e resultados
-7) Execute somente **UMA FASE por vez**. Ao terminar a FASE:
-   - pare e peça autorização para a próxima FASE
+7) Execute somente **UMA FASE por vez**. Ao terminar a FASE, pare e peça autorização para a próxima FASE.
 8) Se detectar duplicação/overreach fora do escopo, **interrompa e reporte**.
+9) **Todas as mudanças serão executadas e validadas na VPS** (http://201.76.56.247/). Diagnósticos, testes e navegação devem ser feitos no sistema em produção.

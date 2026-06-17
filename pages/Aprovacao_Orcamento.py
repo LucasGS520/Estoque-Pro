@@ -247,7 +247,7 @@ for item in sorted_itens:
             }
             for c in sorted(item.cotacoes, key=lambda c: c.total_calculado)
         ]
-        st.dataframe(pd.DataFrame(_rows), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True)
     else:
         st.caption("_Sem cotações registradas._")
 

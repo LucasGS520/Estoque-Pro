@@ -451,7 +451,7 @@ def _dialog_resumo_compra(orc_enc: Orcamento) -> None:
 
     for _forn, _rows in _grupos.items():
         st.markdown(f"#### 🏪 {_forn}")
-        st.dataframe(pd.DataFrame(_rows), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True)
 
     st.divider()
     st.markdown(

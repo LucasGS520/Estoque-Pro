@@ -96,7 +96,7 @@ fig = px.bar(
 )
 fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y}<extra></extra>")
 apply_chart_theme(fig, height=320, showlegend=True)
-st.plotly_chart(fig, width='stretch')
+st.plotly_chart(fig, use_container_width=True)
 
 # ── Itens críticos ────────────────────────────────────────────────────────────
 criticos = [r for r in results if r.status in (
@@ -122,7 +122,7 @@ if criticos:
     styled_crit = df_crit.style.apply(
         lambda row: colorir_linhas_status(row, campo="Status"), axis=1
     )
-    st.dataframe(styled_crit, width='stretch', hide_index=True)
+    st.dataframe(styled_crit, use_container_width=True, hide_index=True)
     if len(criticos) > 20:
         st.caption(f"Exibindo 20 de {len(criticos)} itens críticos — ver lista completa em **Compras**.")
     st.caption("Para fornecedores sugeridos e valores estimados, rode a análise em **Compras**.")

@@ -197,7 +197,7 @@ if tab_sel == "Consumo × Reposição":
         fig_bar.update_traces(textposition="outside")
         fig_bar.update_yaxes(autorange="reversed")
         apply_chart_theme(fig_bar, height=max(280, len(df_top) * 45), showlegend=False)
-        st.plotly_chart(fig_bar, width='stretch')
+        st.plotly_chart(fig_bar, use_container_width=True)
 
         # ── Bloco 4 — Gráfico Secundário: Linha temporal ─────────────────────
         if not df_timeline.empty:
@@ -223,7 +223,7 @@ if tab_sel == "Consumo × Reposição":
             )
             fig_line.update_layout(xaxis_type="category")
             apply_chart_theme(fig_line, height=300, showlegend=True)
-            st.plotly_chart(fig_line, width='stretch')
+            st.plotly_chart(fig_line, use_container_width=True)
 
         st.divider()
         _doc_path_m = gerar_relatorio_consumo(_periodo_sel_m, kpis, df_timeline)
@@ -276,7 +276,7 @@ elif tab_sel == "Por Categoria":
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
             apply_chart_theme(fig, height=max(320, n_cats * 36))
         fig.update_layout(coloraxis_showscale=False)
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
         _doc_path_cat = gerar_relatorio_categoria(_periodo_sel_cat, df_cat)
@@ -343,7 +343,7 @@ elif tab_sel == "Por Setor":
         fig.update_traces(textposition="outside", marker_color=bar_colors)
         fig.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
         apply_chart_theme(fig, height=max(280, len(df_setor) * 40))
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
         section_title("Detalhamento")
         df_exib = df_setor.rename(columns={
@@ -351,7 +351,7 @@ elif tab_sel == "Por Setor":
             "total_saida": "Total Retirado",
             "num_movimentacoes": "Nº Movimentações",
         })
-        st.dataframe(df_exib, width='stretch', hide_index=True)
+        st.dataframe(df_exib, use_container_width=True, hide_index=True)
         st.caption(f"{len(df_setor)} setor(es) com movimentações no período.")
 
         st.divider()
@@ -414,7 +414,7 @@ elif tab_sel == "Por Item":
         fig.update_traces(textposition="outside", marker_color=bar_colors_item)
         fig.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
         apply_chart_theme(fig, height=max(280, len(top_df) * 36))
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
         section_title("Detalhamento")
         cols_exib = ["item", "categoria", "total_saida", "num_movimentacoes"]
@@ -427,7 +427,7 @@ elif tab_sel == "Por Item":
             "total_saida": "Total Retirado",
             "num_movimentacoes": "Nº Movimentações",
         })
-        st.dataframe(df_exib, width='stretch', hide_index=True)
+        st.dataframe(df_exib, use_container_width=True, hide_index=True)
         st.caption(f"{len(df_item)} item(ns) com movimentações no período.")
 
         st.divider()

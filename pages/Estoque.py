@@ -167,7 +167,7 @@ if tab_sel == "Visualizar":
     styled = df.style.apply(
         lambda row: colorir_linhas_status(row, campo="Status"), axis=1
     )
-    st.dataframe(styled, width='stretch', hide_index=True)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
     total = len(master_rows)
     label = f"{len(filtradas)} itens exibidos"
     if len(filtradas) < total:
@@ -373,7 +373,7 @@ elif tab_sel == "Devoluções":
             }
             for dev in pendentes
         ])
-        st.dataframe(df_pendentes, width='stretch', hide_index=True)
+        st.dataframe(df_pendentes, use_container_width=True, hide_index=True)
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
         section_title("Processar Devolução")
@@ -482,7 +482,7 @@ elif tab_sel == "Editar":
         ]
 
         if todos_rows:
-            st.dataframe(pd.DataFrame(df_itens_rows), width='stretch', hide_index=True)
+            st.dataframe(pd.DataFrame(df_itens_rows), use_container_width=True, hide_index=True)
             label = f"{len(df_itens_rows)} de {len(todos_rows)} itens"
             if len(df_itens_rows) < len(todos_rows):
                 label += " (filtrado)"
@@ -876,7 +876,7 @@ elif tab_sel == "Editar":
         ]
 
         if df_forn_rows:
-            st.dataframe(pd.DataFrame(df_forn_rows_filtered), width='stretch', hide_index=True)
+            st.dataframe(pd.DataFrame(df_forn_rows_filtered), use_container_width=True, hide_index=True)
             st.caption(f"{len(df_forn_rows_filtered)} de {len(df_forn_rows)} fornecedores")
         else:
             st.info("Nenhum fornecedor cadastrado.")
@@ -1062,7 +1062,7 @@ elif tab_sel == "Editar":
         ]
 
         if df_cat_rows:
-            st.dataframe(pd.DataFrame(df_cat_rows_filtered), width='stretch', hide_index=True)
+            st.dataframe(pd.DataFrame(df_cat_rows_filtered), use_container_width=True, hide_index=True)
             st.caption(f"{len(df_cat_rows_filtered)} de {len(df_cat_rows)} categorias")
         else:
             st.info("Nenhuma categoria cadastrada.")
@@ -1230,7 +1230,7 @@ elif tab_sel == "Editar":
         ]
 
         if df_set_rows:
-            st.dataframe(pd.DataFrame(df_set_rows_filtered), width='stretch', hide_index=True)
+            st.dataframe(pd.DataFrame(df_set_rows_filtered), use_container_width=True, hide_index=True)
             st.caption(f"{len(df_set_rows_filtered)} de {len(df_set_rows)} setor(es)")
         else:
             st.info("Nenhum setor cadastrado.")
