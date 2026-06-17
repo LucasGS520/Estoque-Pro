@@ -81,16 +81,10 @@ html, body, [class*="css"], .stApp {
 }
 
 /* ── Controle de REABRIR sidebar (desktop: seta "›") ─────────────── */
-/* position: fixed tira do fluxo do documento — nunca sobreposto pelo conteúdo */
+/* Não forçamos display/visibility — o Streamlit controla quando este
+   elemento aparece (apenas quando o sidebar está fechado). Garantimos
+   apenas z-index, pointer-events e aparência correta. */
 [data-testid="stSidebarCollapsedControl"] {
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
-    height: 100vh !important;
-    display: flex !important;
-    align-items: center !important;
-    visibility: visible !important;
-    opacity: 1 !important;
     z-index: 999999 !important;
     pointer-events: all !important;
 }
