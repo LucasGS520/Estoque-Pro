@@ -870,7 +870,7 @@ def deletar_orcamento(session: Session, orc_id: int) -> None:
     orc = session.get(Orcamento, orc_id)
     if orc is None:
         raise ValueError(f"Orçamento {orc_id} não encontrado.")
-    _DELETAVEIS = {"APROVADO", "APROVADO_PARCIAL", "REPROVADO", "CANCELADO", "DEVOLVIDO_REVISAO", "REVISAR"}
+    _DELETAVEIS = {"RASCUNHO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO", "CANCELADO", "DEVOLVIDO_REVISAO", "REVISAR"}
     if orc.status not in _DELETAVEIS:
         raise ValueError(
             f"Não é possível excluir orçamento com status '{orc.status}'. Cancele-o primeiro."

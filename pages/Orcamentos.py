@@ -1134,7 +1134,7 @@ elif tab_sel == "Cotações":
 
         obs_cot = st.text_area(
             "Observação (opcional)",
-            height=60,
+            height=68,
             key=f"cot_obs_{item_sel_id}_{_fv}",
         )
 

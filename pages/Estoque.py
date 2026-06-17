@@ -389,9 +389,9 @@ elif tab_sel == "Devoluções":
     else:
         df_pendentes = pd.DataFrame([
             {
-                "Categoria": dev.item.categoria.nome if dev.item.categoria else "-",
-                "Item": dev.item.nome,
-                "Und.": dev.item.unidade,
+                "Categoria": dev.item.categoria.nome if (dev.item and dev.item.categoria) else "-",
+                "Item": dev.item.nome if dev.item else "(item removido)",
+                "Und.": dev.item.unidade if dev.item else "-",
                 "Qtd. Devolvida": dev.quantidade,
                 "Setor": dev.setor.nome if dev.setor else "-",
                 "Data": dev.criado_em.strftime("%d/%m/%Y %H:%M") if dev.criado_em else "-",
@@ -405,7 +405,7 @@ elif tab_sel == "Devoluções":
         section_title("Processar Devolução")
 
         opcoes_proc = {
-            f"{d.item.nome} — {d.quantidade} {d.item.unidade} ({d.setor.nome if d.setor else '-'})": d.id
+            f"{d.item.nome if d.item else '(item removido)'} — {d.quantidade} {d.item.unidade if d.item else '?'} ({d.setor.nome if d.setor else '-'})": d.id
             for d in pendentes
         }
         sel_proc = st.selectbox(

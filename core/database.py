@@ -194,6 +194,17 @@ def run_schema_migrations(engine):
         ))
         conn.commit()
 
+        # Descarta devoluções pendentes cujo item foi removido do catálogo.
+        # SQLite não impõe FK por padrão, então este cleanup idempotente garante
+        # que a aba Devoluções não exiba registros sem item vinculado.
+        conn.execute(text("""
+            UPDATE devolucoes_material
+            SET status = 'descartada', processado_em = datetime('now', 'localtime')
+            WHERE status = 'pendente'
+              AND item_id NOT IN (SELECT id FROM itens)
+        """))
+        conn.commit()
+
     _migrar_timestamps_para_hora_local(engine)
 
 
