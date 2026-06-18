@@ -2,7 +2,7 @@
 # Docs: https://docs.ntfy.sh/config/
 
 # URL base pública (via nginx no mesmo VPS)
-base-url: "http://201.76.56.247:9090"
+base-url: "http://estoque.marketalert.com.br:9090"
 
 # Cache de mensagens: dispositivos offline recebem ao reconectar
 cache-file: "/var/lib/ntfy/cache.db"

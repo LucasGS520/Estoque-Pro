@@ -200,7 +200,7 @@ nano /caminho/do/projeto/.env
 Preencha com os valores obtidos:
 
 ```env
-APP_BASE_URL=http://201.76.56.247
+APP_BASE_URL=https://estoque.marketalert.com.br
 ADMIN_PASSWORD=<defina-uma-senha-forte>
 
 # WhatsApp Cloud API
@@ -228,7 +228,7 @@ docker compose restart estoque-dfeb
 
 ### Teste rápido via sistema
 
-1. Acesse o sistema em http://201.76.56.247/
+1. Acesse o sistema em https://estoque.marketalert.com.br/
 2. Navegue até **Análise de Compras**
 3. Clique em **"Enviar solicitações"** para abrir um ciclo de teste
 4. Verifique se o WhatsApp chegou nos setores cadastrados com número

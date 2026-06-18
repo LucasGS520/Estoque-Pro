@@ -60,7 +60,7 @@ iPhones precisam de APNs (Apple Push Notification Service) para receber push qua
 
 O ponto importante: **Streamlit fala com ntfy diretamente pela rede interna Docker** (`http://ntfy:80`) — sem passar pelo nginx, sem ir para a internet. É uma comunicação privada dentro do servidor.
 
-O celular do admin acessa o ntfy diretamente via `http://201.76.56.247:9090` — porta dedicada exposta pelo container, sem passar pelo nginx. **A porta 9090 deve estar liberada no firewall do VPS** (ver Passo 1 abaixo).
+O celular do admin acessa o ntfy diretamente via `http://estoque.marketalert.com.br:9090` — porta dedicada exposta pelo container, sem passar pelo nginx. **A porta 9090 deve estar liberada no firewall do VPS** (ver Passo 1 abaixo).
 
 ---
 
@@ -256,7 +256,7 @@ curl -H "Authorization: Bearer tk_SEU_TOKEN" \
 
 - Instalar o app **ntfy** (Android: Play Store ou F-Droid / iOS: App Store) — gratuito
 - Abrir o app → menu → **Manage accounts** → **Add account**
-- Servidor: `http://201.76.56.247:9090`
+- Servidor: `http://estoque.marketalert.com.br:9090`
 - Usuário: `admin` / Senha: a que você definiu no Passo 4
 - Voltar para a tela principal → **Subscribe to topic**
 - Tópico: `dfeb-estoque`
