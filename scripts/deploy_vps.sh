@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/dfeb/estoque/app}"
-BRANCH="${BRANCH:-fix/ajustes-alinhamento}"
+BRANCH="${BRANCH:-main}"
 
 cd "$APP_DIR"
 

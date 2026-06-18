@@ -21,3 +21,6 @@ data/exports/*
 .DS_Store
 Thumbs.db
 logs/
+certbot/
+*.bak-*
+.env.bak-*
