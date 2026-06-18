@@ -25,6 +25,7 @@ from core.models import (
     SolicitacaoMaterial,
 )
 from core.ui import limpar_telefone
+import services.push_service as push_service
 
 
 def _normalizar(texto: str) -> str:
@@ -137,6 +138,15 @@ def registrar_movimentacao(
     item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
+
+    # Notifica o responsável quando uma saída provoca mudança para status crítico (edge trigger)
+    if tipo == "saida":
+        _minimo = item.estoque_minimo_vigente or 0
+        if nova_qtd <= 0 and qtd_anterior > 0:
+            push_service.notificar_estoque_zerado(item.nome)
+        elif _minimo > 0 and nova_qtd < _minimo and qtd_anterior >= _minimo:
+            push_service.notificar_estoque_abaixo_minimo(item.nome, nova_qtd, _minimo)
+
     return item
 
 

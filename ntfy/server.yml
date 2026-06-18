@@ -1,0 +1,18 @@
+# ntfy server — configuração DFeB
+# Docs: https://docs.ntfy.sh/config/
+
+# URL base pública (via nginx no mesmo VPS)
+base-url: "http://201.76.56.247/ntfy"
+
+# Cache de mensagens: dispositivos offline recebem ao reconectar
+cache-file: "/var/lib/ntfy/cache.db"
+cache-duration: "12h"
+
+# Autenticação: nega acesso a todos por padrão; exige token/senha
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+
+# Relay para iOS (APNs via ntfy.sh — necessário para push em iPhone)
+upstream-base-url: "https://ntfy.sh"
+
+log-level: "warn"

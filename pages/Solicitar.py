@@ -13,6 +13,7 @@ from core.ui import _CSS, _LOGO, section_title
 from services.ciclo_service import get_ciclo_ativo, get_participante_por_token, marcar_setor_respondido
 from services.compras_service import criar_pedido_solicitacao, get_pedidos_setor_periodo
 from services.estoque_service import get_all_itens, get_setores
+import services.push_service as push_service
 
 # CSS global + ocultar sidebar
 st.markdown(_CSS, unsafe_allow_html=True)
@@ -631,6 +632,8 @@ if submitted:
         # Ciclo encerrado/prazo expirado entre o carregamento da página e o envio
         st.error(f"Não foi possível enviar a solicitação: {_exc_envio}")
     else:
+        _nome_setor_push = next((nome for sid, nome in setores if sid == setor_id), "Setor")
+        push_service.notificar_formulario_recebido(_nome_setor_push, periodo_label_sol)
         st.session_state["sol_enviada"] = True
         st.session_state["sol_confirmar_segundo_envio"] = False
         st.rerun()

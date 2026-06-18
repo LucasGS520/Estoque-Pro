@@ -14,6 +14,7 @@ from core.database import get_session_factory
 from core.models import ItemOrcamento as _ItemOrc, Orcamento as _Orc
 from core.ui import _CSS, _LOGO, fmt_brl
 from services.orcamento_service import get_orcamento_por_token, registrar_decisao_diretor
+import services.push_service as push_service
 
 # ── CSS + sidebar oculta ──────────────────────────────────────────────────────
 st.markdown(_CSS, unsafe_allow_html=True)
@@ -343,6 +344,7 @@ with _col_btn:
                     itens_reprovados=_reprovados if _reprovados else None,
                     itens_revisao=_revisao if _revisao else None,
                 )
+            push_service.notificar_decisao_orcamento(orc.numero, _decisao_val, periodo_str)
             st.success("Decisão registrada com sucesso.")
             st.rerun()
         except ValueError as e:

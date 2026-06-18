@@ -38,3 +38,11 @@ WA_TEMPLATE_ENCERRAM  = os.getenv("WA_TEMPLATE_ENCERRAM",  "encerramento_ciclo_m
 WA_TEMPLATE_FEEDBACK  = os.getenv("WA_TEMPLATE_FEEDBACK",  "feedback_solicitacao_materiais")
 WA_TEMPLATE_COTACAO   = os.getenv("WA_TEMPLATE_COTACAO",   "")  # template de solicitação de cotação a fornecedores
 WA_TEMPLATE_LANG      = os.getenv("WA_TEMPLATE_LANG", "pt_BR")
+
+# ntfy — push notifications internas ao responsável de estoque.
+# NTFY_SERVER: URL interna do container (ex: http://ntfy:80)
+# NTFY_TOPIC:  nome do tópico assinado no app ntfy (ex: dfeb-estoque)
+# NTFY_TOKEN:  token de publicação gerado via "ntfy token add admin"
+NTFY_SERVER = os.getenv("NTFY_SERVER", "http://ntfy:80")
+NTFY_TOPIC  = os.getenv("NTFY_TOPIC",  "")
+NTFY_TOKEN  = os.getenv("NTFY_TOKEN",  "")
