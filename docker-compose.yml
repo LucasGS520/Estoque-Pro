@@ -16,6 +16,8 @@ services:
     image: binwiederhier/ntfy
     container_name: ntfy-dfeb
     restart: unless-stopped
+    ports:
+      - "9090:80"
     volumes:
       - ntfy_data:/var/lib/ntfy
       - ./ntfy/server.yml:/etc/ntfy/server.yml:ro

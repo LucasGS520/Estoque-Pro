@@ -52,17 +52,15 @@ iPhones precisam de APNs (Apple Push Notification Service) para receber push qua
 
 ```
 [Celular do admin]
-       ↕  WebSocket persistente
-[nginx :80 → /ntfy/]
-       ↕  proxy interno Docker
-[Container ntfy-dfeb :80]
-       ↑  POST interno Docker
+       ↕  WebSocket persistente — porta 9090
+[Container ntfy-dfeb :9090 (exposto)]
+       ↑  POST interno Docker — http://ntfy:80
 [Container estoque-dfeb (Streamlit)]
 ```
 
 O ponto importante: **Streamlit fala com ntfy diretamente pela rede interna Docker** (`http://ntfy:80`) — sem passar pelo nginx, sem ir para a internet. É uma comunicação privada dentro do servidor.
 
-O celular do admin acessa o ntfy por fora via `http://201.76.56.247/ntfy/` — o nginx na porta 80 recebe e encaminha para o container ntfy. `Nenhuma porta nova foi aberta no firewall do VPS`.
+O celular do admin acessa o ntfy diretamente via `http://201.76.56.247:9090` — porta dedicada exposta pelo container, sem passar pelo nginx. **A porta 9090 deve estar liberada no firewall do VPS** (ver Passo 1 abaixo).
 
 ---
 
@@ -178,34 +176,45 @@ NTFY_TOKEN=tk_xxxxxxxxxxxxxxxxxxxxxxxx
 
 ## 7. O que fazer agora para funcionar
 
-São 4 passos depois do deploy. Execute na ordem:
+São 5 passos depois do deploy. Execute na ordem:
 
-1. **Passo 1 — Commit e deploy**
+1. **Passo 1 — Liberar porta 9090 no firewall da VPS**
 
+```bash
+# Se o VPS usa UFW (Ubuntu/Debian):
+ufw allow 9090/tcp
+ufw status  # confirmar que aparece 9090 ALLOW
+
+# Se usa iptables direto:
+iptables -A INPUT -p tcp --dport 9090 -j ACCEPT
 ```
-# Local: commit das mudanças
+
+2. **Passo 2 — Commit, push e deploy**
+
+```bash
+# Local: commit das correções
 git add .
-git commit -m "feat: camada de push notifications via ntfy"
+git commit -m "fix: ntfy porta dedicada 9090 (subpath não suportado)"
 git push
 
-# VPS: atualizar e subir containers
+# VPS: atualizar e recriar containers
 git pull
 docker compose up -d --build
 ```
 
-2. **Passo 2 — Verificar se ntfy subiu**
+3. **Passo 3 — Verificar se ntfy subiu corretamente**
 
-```
-# Na VPS: verificar se o container está rodando
+```bash
+# Verificar se o container está rodando (deve aparecer ntfy-dfeb)
 docker ps | grep ntfy
 
-# Testar o health check (deve retornar {"healthy":true})
-curl http://localhost/ntfy/v1/health
+# Testar o health check na porta 9090 (deve retornar {"healthy":true})
+curl http://localhost:9090/v1/health
 ```
 
-3. **Passo 3 — Criar usuário e token**
+4. **Passo 4 — Criar usuário e token**
 
-```
+```bash
 # Criar usuário admin do ntfy
 # (vai pedir uma senha — guarde ela para usar no app do celular)
 docker exec -it ntfy-dfeb ntfy user add --role=admin admin
@@ -218,9 +227,9 @@ docker exec -it ntfy-dfeb ntfy token add admin
 # Copie o token gerado
 ```
 
-4. **Passo 4 — Configurar o .env da VPS**
+5. **Passo 5 — Configurar o .env da VPS**
 
-```
+```bash
 # Editar o .env
 nano .env
 
@@ -232,14 +241,25 @@ NTFY_TOKEN=tk_AgQdq763PAke3zEfe2OwdhzpvMtPP5Xl5zXXXXX
 docker compose restart estoque-dfeb
 ```
 
-5. **Passo 5 — Configurar o app ntfy no celular**
+6. **Passo 6 — Testar publicação manual**
 
-- Instalar o app ntfy (Android: Play Store ou F-Droid / iOS: App Store) — gratuito
-- Abrir o app → menu → Manage accounts → Add account
-- Servidor: http://201.76.56.247/ntfy
-- Usuário: admin / Senha: a que você definiu no Passo 3
-- Voltar para a tela principal → Subscribe to topic
-- Tópico: dfeb-estoque
+```bash
+# Enviar notificação de teste direto pela VPS (substituir TOKEN e TOPIC)
+curl -H "Authorization: Bearer tk_SEU_TOKEN" \
+     -H "Title: Teste ntfy" \
+     -d "Sistema configurado com sucesso!" \
+     http://localhost:9090/dfeb-estoque
+# Resposta esperada: {"id":"...","time":...,"event":"message",...}
+```
+
+7. **Passo 7 — Configurar o app ntfy no celular**
+
+- Instalar o app **ntfy** (Android: Play Store ou F-Droid / iOS: App Store) — gratuito
+- Abrir o app → menu → **Manage accounts** → **Add account**
+- Servidor: `http://201.76.56.247:9090`
+- Usuário: `admin` / Senha: a que você definiu no Passo 4
+- Voltar para a tela principal → **Subscribe to topic**
+- Tópico: `dfeb-estoque`
 
 A partir deste momento, qualquer notificação publicada pelo sistema chegará no celular.
 
