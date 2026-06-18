@@ -2,7 +2,7 @@
 
 Deve ser rodado uma vez por dia (recomendado às 9h) via docker exec:
 
-    docker exec estoque-dfeb python /app/scripts/auto_notificacoes.py
+    docker exec estoque-app python /app/scripts/auto_notificacoes.py
 
 O script verifica todos os ciclos de solicitação abertos e dispara:
   - Lembrete D+2: se o ciclo tem 2+ dias de abertura e o setor não recebeu lembrete

@@ -16,7 +16,7 @@ import plotly.express as px
 from core.auth import require_admin
 from core.database import get_session_factory
 from core.models import Item, Movimentacao
-from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, DFEB_COLORS, PLOTLY_CONFIG
+from core.ui import setup_page, page_header, section_title, empty_state, apply_chart_theme, chart_title, APP_COLORS, PLOTLY_CONFIG
 from documents.relatorio_categoria import gerar_relatorio_categoria
 from documents.relatorio_consumo   import gerar_relatorio_consumo
 from documents.relatorio_historico import gerar_relatorio_historico
@@ -37,12 +37,7 @@ from services.relatorio_service import (
     historico_movimentacoes,
 )
 
-# Meses abreviados pt-BR para formatar eixo X dos gráficos temporais
-_MESES_PTBR = {
-    "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr",
-    "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago",
-    "09": "Set", "10": "Out", "11": "Nov", "12": "Dez",
-}
+from core.i18n import MESES_ABREV as _MESES_PTBR
 
 def _fmt_mes(mes_str: str) -> str:
     """Converte 'YYYY-MM' em 'Mmm/AA' (ex: '2025-06' → 'Jun/25')."""
@@ -141,9 +136,9 @@ st.markdown("""
         white-space: nowrap !important;
     }
     [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
-        border-color: #E10600 !important;
-        color: #E10600 !important;
-        background: rgba(225, 6, 0, 0.08) !important;
+        border-color: #374151 !important;
+        color: #374151 !important;
+        background: rgba(55, 65, 81, 0.08) !important;
     }
 }
 </style>
@@ -216,7 +211,7 @@ if tab_sel == "Consumo × Reposição":
             x="total_saida",
             y="item",
             orientation="h",
-            color_discrete_sequence=[DFEB_COLORS["red"]],
+            color_discrete_sequence=[APP_COLORS["primary"]],
             labels={"total_saida": "Consumo", "item": "Item"},
             text="total_saida",
         )
@@ -243,7 +238,7 @@ if tab_sel == "Consumo × Reposição":
                 y="quantidade",
                 color="tipo",
                 markers=True,
-                color_discrete_map={"consumo": DFEB_COLORS["red"], "reposição": DFEB_COLORS["black"]},
+                color_discrete_map={"consumo": APP_COLORS["primary"], "reposição": APP_COLORS["black"]},
                 labels={"mes_label": _label_eixo, "quantidade": "Quantidade", "tipo": ""},
                 category_orders={"mes_label": df_timeline["mes_label"].tolist()},
             )
@@ -286,7 +281,7 @@ elif tab_sel == "Por Categoria":
                 text="total_saida",
                 labels={"categoria": "Categoria", "total_saida": "Qtd. Consumida"},
             )
-            fig.update_traces(marker_color=DFEB_COLORS["red"], textposition="outside")
+            fig.update_traces(marker_color=APP_COLORS["primary"], textposition="outside")
             apply_chart_theme(fig, height=320)
         else:
             chart_title("Consumo por categoria")
@@ -298,7 +293,7 @@ elif tab_sel == "Por Categoria":
                 text="total_saida",
                 labels={"categoria": "Categoria", "total_saida": "Qtd. Consumida"},
             )
-            fig.update_traces(marker_color=DFEB_COLORS["red"], textposition="outside")
+            fig.update_traces(marker_color=APP_COLORS["primary"], textposition="outside")
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
             apply_chart_theme(fig, height=max(320, n_cats * 36))
         fig.update_layout(coloraxis_showscale=False)
@@ -351,11 +346,11 @@ elif tab_sel == "Por Setor":
         bar_colors = []
         for _, row in df_setor.sort_values("total_saida").iterrows():
             if row["setor"] == "Sem setor":
-                bar_colors.append(DFEB_COLORS["orange"])
+                bar_colors.append(APP_COLORS["orange"])
             elif row["setor"] == setor_top:
-                bar_colors.append(DFEB_COLORS["red"])
+                bar_colors.append(APP_COLORS["primary"])
             else:
-                bar_colors.append(DFEB_COLORS["black"])
+                bar_colors.append(APP_COLORS["black"])
 
         chart_title("Consumo por setor")
         fig = px.bar(
@@ -424,7 +419,7 @@ elif tab_sel == "Por Item":
         # 1ª barra (maior consumo) = vermelho; demais = preto
         item_top = top_df.iloc[0]["item"] if len(top_df) > 0 else None
         bar_colors_item = [
-            DFEB_COLORS["red"] if row["item"] == item_top else DFEB_COLORS["black"]
+            APP_COLORS["primary"] if row["item"] == item_top else APP_COLORS["black"]
             for _, row in top_df.sort_values("total_saida").iterrows()
         ]
 
@@ -543,9 +538,9 @@ elif tab_sel == "Histórico de Movimentações":
             empty_state("📋", "Nenhuma movimentação encontrada para os filtros selecionados.")
         else:
             _TIPO_BADGE = {
-                "entrada":   "<span style='background:#F4F4F5;color:#262626;padding:2px 8px;"
+                "entrada":   "<span style='background:#F4F4F5;color:#111827;padding:2px 8px;"
                              "border-radius:4px;font-size:12px;font-weight:500;'>Entrada</span>",
-                "saida":     "<span style='background:#FEE2E2;color:#E10600;padding:2px 8px;"
+                "saida":     "<span style='background:#FEE2E2;color:#DC2626;padding:2px 8px;"
                              "border-radius:4px;font-size:12px;font-weight:500;'>Saída</span>",
                 "devolucao": "<span style='background:#FEF3C7;color:#92400E;padding:2px 8px;"
                              "border-radius:4px;font-size:12px;font-weight:500;'>Devolução</span>",

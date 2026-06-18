@@ -110,9 +110,9 @@ st.markdown("""
         white-space: nowrap !important;
     }
     [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
-        border-color: #E10600 !important;
-        color: #E10600 !important;
-        background: rgba(225, 6, 0, 0.08) !important;
+        border-color: #374151 !important;
+        color: #374151 !important;
+        background: rgba(55, 65, 81, 0.08) !important;
     }
 }
 </style>
@@ -522,7 +522,7 @@ elif tab_sel == "Editar":
 
         with _sep_itens:
             st.markdown(
-                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:1100px; margin:0 auto;"></div>',
+                '<div class="ep-vert-sep" style="width:2px; background:#dee2e6; height:1100px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -605,7 +605,7 @@ elif tab_sel == "Editar":
 
         # ── Editar / Remover item ─────────────────────────────────────────────
         with col_ei:
-            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
+            st.markdown('<hr class="ep-edit-divider">', unsafe_allow_html=True)
             section_title("Editar / Remover item")
 
             with SessionLocal() as session:
@@ -913,7 +913,7 @@ elif tab_sel == "Editar":
 
         with _sep_forn:
             st.markdown(
-                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:650px; margin:0 auto;"></div>',
+                '<div class="ep-vert-sep" style="width:2px; background:#dee2e6; height:650px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -960,7 +960,7 @@ elif tab_sel == "Editar":
 
         # ── Editar / Remover fornecedor ───────────────────────────────────────
         with col_ef:
-            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
+            st.markdown('<hr class="ep-edit-divider">', unsafe_allow_html=True)
             section_title("Editar / Remover fornecedor")
 
             if not forn_data:
@@ -1100,7 +1100,7 @@ elif tab_sel == "Editar":
 
         with _sep_cat:
             st.markdown(
-                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:450px; margin:0 auto;"></div>',
+                '<div class="ep-vert-sep" style="width:2px; background:#dee2e6; height:450px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1132,7 +1132,7 @@ elif tab_sel == "Editar":
 
         # ── Editar / Remover categoria ────────────────────────────────────────
         with col_ec:
-            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
+            st.markdown('<hr class="ep-edit-divider">', unsafe_allow_html=True)
             section_title("Editar / Remover categoria")
 
             if not cat_data:
@@ -1269,7 +1269,7 @@ elif tab_sel == "Editar":
 
         with _sep_set:
             st.markdown(
-                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:400px; margin:0 auto;"></div>',
+                '<div class="ep-vert-sep" style="width:2px; background:#dee2e6; height:400px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1315,7 +1315,7 @@ elif tab_sel == "Editar":
 
         # ── Editar setor ──────────────────────────────────────────────────────
         with col_es:
-            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
+            st.markdown('<hr class="ep-edit-divider">', unsafe_allow_html=True)
             section_title("Editar setor")
 
             if not setor_data:

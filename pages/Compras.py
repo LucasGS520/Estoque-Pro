@@ -135,9 +135,9 @@ st.markdown("""
         white-space: nowrap !important;
     }
     [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
-        border-color: #E10600 !important;
-        color: #E10600 !important;
-        background: rgba(225, 6, 0, 0.08) !important;
+        border-color: #374151 !important;
+        color: #374151 !important;
+        background: rgba(55, 65, 81, 0.08) !important;
     }
 }
 </style>
@@ -291,11 +291,7 @@ def _modal_novo_item(sol, periodo, exp_key: str) -> None:
             st.info("Nenhum item encontrado para a categoria selecionada.")
 
 
-MESES_PT = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
-}
+from core.i18n import MESES_PT, MESES_PT_LISTA as _MESES_PT_LISTA
 
 _STATUS_LABEL = {
     "zerado":              "Zerado",
@@ -313,10 +309,6 @@ _STATUS_LABEL = {
 section_title("Período de Referência")
 
 hoje = tempo.hoje()
-_MESES_PT_LISTA = [
-    "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-]
 
 with SessionLocal() as _s_per:
     _periodos_atividade = get_periodos_com_atividade(_s_per)

@@ -1,7 +1,7 @@
 services:
-  estoque-dfeb:
+  estoque-app:
     build: .
-    container_name: estoque-dfeb
+    container_name: estoque-app
     restart: unless-stopped
     expose:
       - "8501"
@@ -14,7 +14,7 @@ services:
 
   ntfy:
     image: binwiederhier/ntfy
-    container_name: ntfy-dfeb
+    container_name: ntfy-app
     restart: unless-stopped
     ports:
       - "9090:80"
@@ -27,7 +27,7 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
-    container_name: nginx-dfeb
+    container_name: nginx-app
     restart: unless-stopped
     ports:
       - "80:80"
@@ -37,14 +37,14 @@ services:
       - ./certbot/www:/var/www/certbot:ro
       - ./certbot/conf:/etc/letsencrypt:ro
     depends_on:
-      - estoque-dfeb
+      - estoque-app
       - ntfy
     networks:
       - internal
 
   certbot:
     image: certbot/certbot:latest
-    container_name: certbot-dfeb
+    container_name: certbot-app
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt

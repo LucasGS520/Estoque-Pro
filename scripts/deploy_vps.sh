@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/dfeb/estoque/app}"
+APP_DIR="${APP_DIR:-/opt/estoquepro/app}"
 BRANCH="${BRANCH:-main}"
 
 cd "$APP_DIR"
 
 if [ -x "scripts/backup_sqlite.sh" ]; then
-  APP_DIR="$APP_DIR" BACKUP_DIR="/opt/dfeb/estoque/backups" ./scripts/backup_sqlite.sh || true
+  APP_DIR="$APP_DIR" BACKUP_DIR="/opt/estoquepro/backups" ./scripts/backup_sqlite.sh || true
 else
   echo "AVISO: script de backup nao encontrado ou sem permissao de execucao. Continuando deploy."
 fi

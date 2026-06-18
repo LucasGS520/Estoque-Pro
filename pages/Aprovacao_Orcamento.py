@@ -28,10 +28,7 @@ st.markdown(
 
 SessionLocal = get_session_factory()
 
-_MESES_PT = [
-    "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-]
+from core.i18n import MESES_PT_LISTA as _MESES_PT
 
 _STATUS_PT = {
     "ENVIADO_APROVACAO": "Aguardando aprovação",
@@ -120,10 +117,10 @@ _logo_tag = (
     f'<img src="data:image/png;base64,{_b64}" '
     f'style="max-width:170px;max-height:64px;display:block;margin:0 auto;">'
     if _b64
-    else '<p style="color:#E10600;font-size:26px;font-weight:700;text-align:center;margin:0;">⚡ DFeB</p>'
+    else '<p style="color:#374151;font-size:26px;font-weight:700;text-align:center;margin:0;">📦 EstoquePro</p>'
 )
 st.markdown(
-    f"<div style='background:#0A0A0A;border-radius:10px;padding:28px 32px;"
+    f"<div style='background:#111827;border-radius:10px;padding:28px 32px;"
     f"text-align:center;margin-bottom:8px;'>"
     f"{_logo_tag}"
     f"<p style='color:rgba(235,235,235,0.65);font-size:13px;margin:8px 0 0;'>"
@@ -132,9 +129,9 @@ st.markdown(
 )
 
 st.markdown(
-    f"<h2 style='color:#262626;margin:16px 0 4px;'>Documento de Orçamento para Aprovação</h2>"
+    f"<h2 style='color:#111827;margin:16px 0 4px;'>Documento de Orçamento para Aprovação</h2>"
     f"<p style='color:#737373;font-size:14px;margin:0 0 20px;'>"
-    f"DFeB Auto Parts · {periodo_str} · {orc.numero} v{orc.versao}</p>",
+    f"EstoquePro · {periodo_str} · {orc.numero} v{orc.versao}</p>",
     unsafe_allow_html=True,
 )
 

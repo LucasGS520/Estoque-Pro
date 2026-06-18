@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/dfeb/estoque/app}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/dfeb/estoque/backups}"
+APP_DIR="${APP_DIR:-/opt/estoquepro/app}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/estoquepro/backups}"
 DB_PATH="$APP_DIR/data/estoque.db"
 
 mkdir -p "$BACKUP_DIR"

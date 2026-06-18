@@ -5,7 +5,7 @@ Streamlit ou banco de dados. Falha graciosamente sem credenciais.
 
 Variáveis de ambiente (core/config.py):
     NTFY_SERVER  — URL interna do container  (padrão: http://ntfy:80)
-    NTFY_TOPIC   — tópico assinado no app    (ex: dfeb-estoque)
+    NTFY_TOPIC   — tópico assinado no app    (ex: estoque-alertas)
     NTFY_TOKEN   — token de publicação       (gerado via ntfy token add)
 
 Prioridades ntfy: 1=min  2=low  3=default  4=high  5=max/urgent

@@ -27,11 +27,7 @@ st.markdown(
 
 SessionLocal = get_session_factory()
 
-MESES_PT = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
-}
+from core.i18n import MESES_PT
 
 
 
@@ -102,7 +98,7 @@ def _exibir_link_invalido():
     st.markdown(
         "<div style='text-align:center;padding:48px 24px;'>"
         "<div style='font-size:48px;margin-bottom:16px;'>🔗</div>"
-        "<h3 style='color:#262626;margin:0 0 8px;'>Link inválido</h3>"
+        "<h3 style='color:#111827;margin:0 0 8px;'>Link inválido</h3>"
         "<p style='color:#737373;font-size:15px;margin:0;'>Este link não é válido ou já expirou. "
         "Solicite um novo link ao responsável pelo setor de compras.</p>"
         "</div>",
@@ -155,11 +151,11 @@ _logo_tag = (
     f'<img src="data:image/png;base64,{_logo_b64}" '
     f'style="max-width:170px;max-height:64px;display:block;margin:0 auto;">'
     if _logo_b64
-    else '<p style="color:#E10600;font-size:26px;font-weight:700;text-align:center;margin:0;">⚡ DFeB</p>'
+    else '<p style="color:#374151;font-size:26px;font-weight:700;text-align:center;margin:0;">📦 EstoquePro</p>'
 )
 
 st.markdown(
-    f"<div style='background:#0A0A0A;border-radius:10px;padding:28px 32px;"
+    f"<div style='background:#111827;border-radius:10px;padding:28px 32px;"
     f"text-align:center;margin-bottom:8px;'>"
     f"{_logo_tag}"
     f"<p style='color:rgba(235,235,235,0.65);font-size:13px;margin:8px 0 0;'>"
@@ -168,7 +164,7 @@ st.markdown(
 )
 
 st.markdown(
-    "<h2 style='color:#262626;margin:16px 0 4px;'>Solicitação de Materiais</h2>"
+    "<h2 style='color:#111827;margin:16px 0 4px;'>Solicitação de Materiais</h2>"
     "<p style='color:#737373;font-size:15px;margin:0 0 20px;'>"
     "Preencha os campos abaixo e envie sua solicitação ao setor de compras.</p>",
     unsafe_allow_html=True,
@@ -192,7 +188,7 @@ if _formulario_bloqueado:
     st.markdown(
         f"<div style='text-align:center;padding:48px 24px;'>"
         f"<div style='font-size:48px;margin-bottom:16px;'>🔒</div>"
-        f"<h3 style='color:#262626;margin:0 0 8px;'>Formulário indisponível</h3>"
+        f"<h3 style='color:#111827;margin:0 0 8px;'>Formulário indisponível</h3>"
         f"<p style='color:#737373;font-size:15px;margin:0 0 4px;'><strong>{_motivo}</strong></p>"
         f"<p style='color:#9e9e9e;font-size:14px;margin:0;'>{_detalhe}</p>"
         f"</div>",
@@ -272,7 +268,7 @@ with col1:
     if _setor_fixo_id is not None:
         st.markdown(
             f"**Setor**  \n"
-            f"<span style='font-size:23px;font-weight:600;color:#262626;'>{_setor_fixo_nome}</span>"
+            f"<span style='font-size:23px;font-weight:600;color:#111827;'>{_setor_fixo_nome}</span>"
             f"<br><span style='font-size:11px;color:#737373;'></span>",
             unsafe_allow_html=True,
         )
@@ -294,7 +290,7 @@ with col2:
 with col3:
     st.markdown(
         f"**Período de referência**  \n"
-        f"<span style='font-size:23px;font-weight:600;color:#262626;'>{periodo_label_sol}</span>"
+        f"<span style='font-size:23px;font-weight:600;color:#111827;'>{periodo_label_sol}</span>"
         f"<br><span style='font-size:11px;color:#737373;'></span>",
         unsafe_allow_html=True,
     )

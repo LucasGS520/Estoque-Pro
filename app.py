@@ -16,7 +16,7 @@ from core.ui import _CSS, _LOGO
 
 # ── Configuração global única ─────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Controle de Estoque — DFeB",
+    page_title="EstoquePro",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -68,8 +68,8 @@ with st.sidebar:
         st.image(str(_LOGO), width=210)
     else:
         st.markdown(
-            "<p style='color:#E10600;font-size:18px;font-weight:700;"
-            "margin:0 0 2px;'>⚡ DFeB</p>",
+            "<p style='color:#374151;font-size:18px;font-weight:700;"
+            "margin:0 0 2px;'>📦 EstoquePro</p>",
             unsafe_allow_html=True,
         )
     st.markdown(

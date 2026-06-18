@@ -1,4 +1,4 @@
-# RH DFeB — Controle de Estoque e Compras
+# EstoquePro — Controle de Estoque, Análise de Compras e Orçamentos
 
 Aplicação web (Streamlit + SQLite/SQLAlchemy 2.0) para gestão de estoque, ciclo mensal de solicitações de materiais, análise de compras e orçamentos.
 

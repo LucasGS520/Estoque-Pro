@@ -70,7 +70,7 @@ _STATUS_LABELS = {
 }
 # Mapeamento por label (não enum) para evitar valores técnicos na legenda
 _STATUS_CORES_LABEL = {
-    "Zerado":           "#E10600",
+    "Zerado":           "#DC2626",
     "Abaixo do Mínimo": "#F59E0B",
     "Abaixo do Ideal":  "#FCD34D",
     "Sem Parâmetro":    "#9CA3AF",

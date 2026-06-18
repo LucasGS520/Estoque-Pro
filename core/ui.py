@@ -11,17 +11,17 @@ from pathlib import Path
 import streamlit as st
 
 _ASSETS = Path(__file__).parent.parent / "assets"
-_LOGO = _ASSETS / "logo_dfeb.png"
+_LOGO = _ASSETS / "logo_app.png"
 
-# ── Paleta de cores DFeB ──────────────────────────────────────────────────────
-DFEB_COLORS: dict[str, str] = {
-    "red":    "#E10600",
-    "black":  "#262626",
-    "gray":   "#9CA3AF",
-    "grid":   "#E5E5E5",
-    "muted":  "#737373",
-    "green":  "#16A34A",
-    "orange": "#F59E0B",
+# ── Paleta de cores EstoquePro ────────────────────────────────────────────────
+APP_COLORS: dict[str, str] = {
+    "primary": "#374151",
+    "black":   "#111827",
+    "gray":    "#6B7280",
+    "grid":    "#E5E7EB",
+    "muted":   "#9CA3AF",
+    "green":   "#16A34A",
+    "orange":  "#F59E0B",
 }
 
 # ── Config padrão Plotly (sem toolbar) ───────────────────────────────────────
@@ -41,8 +41,8 @@ html, body, [class*="css"], .stApp {
 
 /* ── Sidebar escura ──────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background-color: #0A0A0A !important;
-    border-right: 1px solid #262626 !important;
+    background-color: #111827 !important;
+    border-right: 1px solid #111827 !important;
 }
 [data-testid="stSidebar"] > div:first-child {
     padding-top: 1rem !important;
@@ -66,8 +66,8 @@ html, body, [class*="css"], .stApp {
 }
 [data-testid="stSidebarNav"] a[aria-current="page"],
 [data-testid="stSidebarNavLink"][aria-current="page"] {
-    border-left: 3px solid #E10600 !important;
-    background: rgba(225,6,0,0.12) !important;
+    border-left: 3px solid #374151 !important;
+    background: rgba(55,65,81,0.12) !important;
     color: #EBEBEB !important;
 }
 
@@ -82,7 +82,7 @@ html, body, [class*="css"], .stApp {
 
 /* ── Botões primários ────────────────────────────────────────────────── */
 button[kind="primary"] {
-    background-color: #E10600 !important;
+    background-color: #374151 !important;
     color: #FFFFFF !important;
     border: none !important;
     border-radius: 6px !important;
@@ -90,7 +90,7 @@ button[kind="primary"] {
     font-size: 14px !important;
 }
 button[kind="primary"]:hover {
-    background-color: #B80500 !important;
+    background-color: #1F2937 !important;
 }
 button[kind="primary"]:disabled {
     opacity: 0.5 !important;
@@ -102,7 +102,7 @@ button[kind="secondary"] {
     background-color: #FFFFFF !important;
     border: 1px solid #E5E5E5 !important;
     border-radius: 6px !important;
-    color: #0A0A0A !important;
+    color: #111827 !important;
     font-size: 14px !important;
 }
 button[kind="secondary"]:hover {
@@ -124,8 +124,8 @@ button[kind="secondary"]:hover {
     transition: color 0.15s ease;
 }
 [data-testid="stTabs"] button[aria-selected="true"] {
-    color: #E10600 !important;
-    border-bottom: 2px solid #E10600 !important;
+    color: #374151 !important;
+    border-bottom: 2px solid #374151 !important;
     background: transparent !important;
 }
 
@@ -147,7 +147,7 @@ button[kind="secondary"]:hover {
 [data-testid="stMetricValue"] > div {
     font-size: 26px !important;
     font-weight: 700 !important;
-    color: #0A0A0A !important;
+    color: #111827 !important;
     line-height: 1.2 !important;
 }
 [data-testid="stMetricDelta"] {
@@ -179,8 +179,8 @@ button[kind="secondary"]:hover {
 .stTextInput input:focus,
 .stNumberInput input:focus,
 .stTextArea textarea:focus {
-    border-color: #E10600 !important;
-    box-shadow: 0 0 0 2px rgba(225,6,0,0.15) !important;
+    border-color: #374151 !important;
+    box-shadow: 0 0 0 2px rgba(55,65,81,0.15) !important;
 }
 
 /* ── Divisores ───────────────────────────────────────────────────────── */
@@ -190,12 +190,12 @@ hr {
 }
 
 /* ── Transição suave entre páginas ──────────────────────────────────── */
-@keyframes dfeb-fade-in {
+@keyframes ep-fade-in {
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 .main .block-container {
-    animation: dfeb-fade-in 0.20s ease-out;
+    animation: ep-fade-in 0.20s ease-out;
 }
 
 
@@ -214,7 +214,7 @@ header[data-testid="stHeader"] button {
     cursor: pointer !important;
 }
 header[data-testid="stHeader"] svg {
-    fill: #0A0A0A !important;
+    fill: #111827 !important;
 }
 
 /* ── Links de navegação manuais (st.page_link) ───────────────────────── */
@@ -232,15 +232,15 @@ header[data-testid="stHeader"] svg {
 }
 [data-testid="stPageLink"] a[aria-current="page"],
 [data-testid="stPageLink-NavLink"][aria-current="page"] {
-    border-left: 3px solid #E10600 !important;
-    background: rgba(225,6,0,0.12) !important;
+    border-left: 3px solid #374151 !important;
+    background: rgba(55,65,81,0.12) !important;
     color: #EBEBEB !important;
 }
 [data-testid="stPageLink"] svg {
     fill: rgba(235,235,235,0.72) !important;
 }
 [data-testid="stPageLink"] a[aria-current="page"] svg {
-    fill: #E10600 !important;
+    fill: #374151 !important;
 }
 
 /* ── Responsividade Mobile ──────────────────────────────────────────── */
@@ -263,20 +263,20 @@ header[data-testid="stHeader"] svg {
         line-height: 1.3 !important;
     }
     /* Divisor vertical fixo: ocultar em mobile para não bloquear scroll */
-    .dfeb-vert-sep {
+    .ep-vert-sep {
         display: none !important;
     }
 }
 
 /* ── Separador Cadastro / Edição (visível somente em mobile) ─────────── */
-.dfeb-edit-divider {
+.ep-edit-divider {
     display: none !important;
     border: none !important;
     border-top: 2px solid #E5E5E5 !important;
     margin: 20px 0 8px !important;
 }
 @media (max-width: 768px) {
-    .dfeb-edit-divider {
+    .ep-edit-divider {
         display: block !important;
     }
 }
@@ -292,13 +292,13 @@ header[data-testid="stHeader"] svg {
 }
 
 /* ── Card title para gráficos ─────────────────────────────────────────── */
-.dfeb-chart-card-title {
+.ep-chart-card-title {
     border: 1px solid #E5E5E5;
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     padding: 12px 16px;
     background: #FFFFFF;
-    color: #0A0A0A;
+    color: #111827;
     font-size: 14px;
     font-weight: 600;
     margin-bottom: 0 !important;
@@ -383,7 +383,7 @@ def empty_state(icon: str, title: str, description: str = "") -> None:
         f"""
         <div style='text-align:center;padding:48px 0;'>
             <div style='font-size:40px;color:#737373;margin-bottom:12px;'>{icon}</div>
-            <p style='font-size:16px;font-weight:600;color:#262626;
+            <p style='font-size:16px;font-weight:600;color:#111827;
                       margin:0 0 6px;'>{title}</p>
             {desc_html}
         </div>
@@ -433,18 +433,18 @@ def formatar_telefone(digitos: str) -> str:
 
 
 def apply_plotly_theme(fig) -> None:
-    """Aplica paleta e estilo visual DFeB a uma figura Plotly recebida."""
+    """Aplica paleta e estilo visual EstoquePro a uma figura Plotly recebida."""
     fig.update_layout(
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FAFAFA",
         font=dict(
             family="Inter, system-ui, -apple-system, sans-serif",
-            color="#0A0A0A",
+            color="#111827",
             size=12,
         ),
-        colorway=["#E10600", "#262626", "#16A34A", "#F59E0B", "#737373"],
+        colorway=["#374151", "#111827", "#16A34A", "#F59E0B", "#737373"],
         margin=dict(t=40, b=20, l=10, r=10),
-        title_font=dict(size=14, color="#262626"),
+        title_font=dict(size=14, color="#111827"),
         legend=dict(
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
@@ -464,7 +464,7 @@ def apply_plotly_theme(fig) -> None:
 
 
 def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
-    """Aplica tema padronizado DFeB a gráficos Plotly (versão refinada).
+    """Aplica tema padronizado EstoquePro a gráficos Plotly (versão refinada).
 
     Fundo totalmente branco, margens controladas, grid cinza discreto.
     Use este helper nos gráficos novos/refatorados; apply_plotly_theme()
@@ -476,7 +476,7 @@ def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
         plot_bgcolor="#FFFFFF",
         font=dict(
             family="Inter, system-ui, -apple-system, sans-serif",
-            color="#262626",
+            color="#111827",
             size=12,
         ),
         margin=dict(t=56 if showlegend else 24, r=20, b=36, l=48),
@@ -489,7 +489,7 @@ def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
             x=0,
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
-            font=dict(size=12, color="#262626"),
+            font=dict(size=12, color="#111827"),
         ),
         xaxis=dict(
             gridcolor="#E5E5E5",
@@ -509,7 +509,7 @@ def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
 def chart_title(title: str) -> None:
     """Renderiza o cabeçalho visual de um card de gráfico."""
     st.markdown(
-        f'<div class="dfeb-chart-card-title">{title}</div>',
+        f'<div class="ep-chart-card-title">{title}</div>',
         unsafe_allow_html=True,
     )
 

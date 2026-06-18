@@ -142,19 +142,16 @@ st.markdown("""
         white-space: nowrap !important;
     }
     [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
-        border-color: #E10600 !important;
-        color: #E10600 !important;
-        background: rgba(225, 6, 0, 0.08) !important;
+        border-color: #374151 !important;
+        color: #374151 !important;
+        background: rgba(55, 65, 81, 0.08) !important;
     }
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Seleção de período ────────────────────────────────────────────────────────
-_MESES_PT = [
-    "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-]
+from core.i18n import MESES_PT_LISTA as _MESES_PT
 
 with SessionLocal() as _s:
     _periodos_lista = get_periodos_com_consolidacao(_s)

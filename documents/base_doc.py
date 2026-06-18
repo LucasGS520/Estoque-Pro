@@ -20,10 +20,9 @@ from docx.oxml import OxmlElement
 
 from core.config import EXPORTS_DIR
 
-_LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo_dfeb.png"
+_LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo_app.png"
 
-# Cores do sistema: preto, branco, vermelho
-_COR_VERMELHO  = RGBColor(0xCC, 0x00, 0x00)
+# Cores do sistema
 _COR_PRETO     = RGBColor(0x1A, 0x1A, 0x1A)
 _COR_CINZA     = RGBColor(0x64, 0x74, 0x8B)
 _HEX_HEADER    = "1A1A1A"   # preto — fundo do cabeçalho da tabela

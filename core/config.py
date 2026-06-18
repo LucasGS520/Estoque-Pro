@@ -41,7 +41,7 @@ WA_TEMPLATE_LANG      = os.getenv("WA_TEMPLATE_LANG", "pt_BR")
 
 # ntfy — push notifications internas ao responsável de estoque.
 # NTFY_SERVER: URL interna do container (ex: http://ntfy:80)
-# NTFY_TOPIC:  nome do tópico assinado no app ntfy (ex: dfeb-estoque)
+# NTFY_TOPIC:  nome do tópico assinado no app ntfy (ex: estoque-alertas)
 # NTFY_TOKEN:  token de publicação gerado via "ntfy token add admin"
 NTFY_SERVER = os.getenv("NTFY_SERVER", "http://ntfy:80")
 NTFY_TOPIC  = os.getenv("NTFY_TOPIC",  "")
