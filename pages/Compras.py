@@ -909,7 +909,7 @@ elif aba == "Solicitações e Pendências":
                             else ""
                         )
                         _wame_url_setor = f"https://wa.me/{_tel_setor}?text={quote_plus(_msg_wa_setor)}"
-                        st.link_button("Envio WhatsApp", _wame_url_setor, use_container_width=True, key=f"wame_{_p.id}")
+                        st.link_button("Envio WhatsApp", _wame_url_setor, use_container_width=True)
 
         # ── Link do Formulário de Solicitação ────────────────────────────────
         _link_form = gerar_link_formulario_generico()
