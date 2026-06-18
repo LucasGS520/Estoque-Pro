@@ -652,6 +652,7 @@ elif aba == "Solicitações e Pendências":
         _prazo_atual  = _ciclo_prazo.date() if _ciclo_prazo else (hoje + datetime.timedelta(days=7))
         _abertura_txt = _ciclo_abertura.strftime("%d/%m/%Y") if _ciclo_abertura else "—"
         _prazo_txt    = _prazo_atual.strftime("%d/%m/%Y")
+        _prazo_vencido = _ciclo_prazo is not None and tempo.agora() > _ciclo_prazo
         _concluido_pct = int(_respondidos / _total_set * 100) if _total_set else 0
 
         @st.dialog(f"Encerrar coleta de {periodo_label}?")
@@ -695,14 +696,22 @@ elif aba == "Solicitações e Pendências":
 
         with st.container(border=True):
             # Cabeçalho
+            _badge_bg  = "#D97706" if _prazo_vencido else "#16A34A"
+            _badge_txt = "PRAZO EXPIRADO" if _prazo_vencido else "COLETA ABERTA"
             st.markdown(
                 f"**{periodo_label}**&nbsp;"
-                f"<span style='background:#16A34A;color:#fff;font-size:11px;"
-                f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>COLETA ABERTA</span>"
+                f"<span style='background:{_badge_bg};color:#fff;font-size:11px;"
+                f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>{_badge_txt}</span>"
                 f"&nbsp;&nbsp;<span style='font-size:13px;color:#6B7280;'>"
                 f"Enviado em {_abertura_txt} · Prazo em {_prazo_txt}</span>",
                 unsafe_allow_html=True,
             )
+            if _prazo_vencido:
+                st.warning(
+                    "O prazo de resposta expirou. "
+                    "Os formulários dos setores estão bloqueados para novas respostas. "
+                    "Clique em **Encerrar coleta** para finalizar formalmente este ciclo."
+                )
 
             # Indicadores
             _ind1, _ind2, _ind3, _ind4 = st.columns(4)
@@ -766,7 +775,7 @@ elif aba == "Solicitações e Pendências":
                     _modal_remover_ciclo()
 
             # ── Banners de notificações automáticas ──────────────────────────
-            if notificacao_service.credenciais_configuradas() and _pendentes > 0:
+            if not _prazo_vencido and notificacao_service.credenciais_configuradas() and _pendentes > 0:
                 _agora_banner = tempo.agora()
                 _dias_desde_abertura = (_agora_banner - _ciclo_abertura).days if _ciclo_abertura else 0
 
