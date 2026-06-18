@@ -6,6 +6,7 @@ classificar → consolidar → revisar painel → lista final.
 
 import calendar
 import datetime
+from urllib.parse import quote_plus
 
 from core import tempo
 from collections import defaultdict
@@ -19,6 +20,7 @@ from core.ui import (
     empty_state,
     fmt_brl,
     gerar_link_formulario_generico,
+    gerar_link_formulario_token,
     page_header,
     section_title,
     setup_page,
@@ -51,6 +53,8 @@ from services.compras_service import (
 )
 from documents.lista_compras import gerar_lista_compras
 from services import notificacao_service
+from services.notificacao_service import gerar_mensagem_whatsapp_setor
+from services.orcamento_service import formatar_telefone_wame
 from services.ciclo_service import (
     abrir_ciclo,
     adicionar_setor_ao_ciclo,
@@ -840,7 +844,7 @@ elif aba == "Solicitações e Pendências":
             section_title("Status por Setor")
 
             _participantes_ord = sorted(_participantes, key=lambda p: p.setor.nome if p.setor else "")
-            _sh1, _sh2, _sh3, _sh4 = st.columns([3, 2, 4, 1])
+            _sh1, _sh2, _sh3, _sh4 = st.columns([3, 2, 3, 2])
             _sh1.caption("Setor")
             _sh2.caption("Resposta")
             _sh3.caption("Notificação")
@@ -872,7 +876,7 @@ elif aba == "Solicitações e Pendências":
                     _notif_txt   = "— Não enviado"
                     _notif_color = "#6B7280"
 
-                _pc1, _pc2, _pc3, _pc4 = st.columns([3, 2, 4, 1])
+                _pc1, _pc2, _pc3, _pc4 = st.columns([3, 2, 3, 2])
                 _pc1.markdown(f"🏢 **{_pnome}**")
                 _pc2.markdown(_resp_txt)
                 _pc3.markdown(
@@ -880,14 +884,32 @@ elif aba == "Solicitações e Pendências":
                     unsafe_allow_html=True,
                 )
                 with _pc4:
-                    if _p.motivo_falha != "sem_whatsapp":
-                        if st.button("Reenviar", key=f"reenviar_{_p.id}", use_container_width=True):
-                            try:
-                                with SessionLocal() as _rs:
-                                    reenviar_notificacao_setor(_rs, _ciclo_id, _p.setor_id)
-                                st.rerun()
-                            except ValueError as _rve:
-                                st.error(str(_rve))
+                    _btn_rev, _btn_wa = st.columns(2)
+                    with _btn_rev:
+                        if _p.motivo_falha != "sem_whatsapp":
+                            if st.button("Reenviar", key=f"reenviar_{_p.id}", use_container_width=True):
+                                try:
+                                    with SessionLocal() as _rs:
+                                        reenviar_notificacao_setor(_rs, _ciclo_id, _p.setor_id)
+                                    st.rerun()
+                                except ValueError as _rve:
+                                    st.error(str(_rve))
+                    with _btn_wa:
+                        _link_form_setor = (
+                            gerar_link_formulario_token(_p.token)
+                            if _p.token
+                            else gerar_link_formulario_generico()
+                        )
+                        _msg_wa_setor = gerar_mensagem_whatsapp_setor(
+                            _pnome, periodo_label, _link_form_setor, _prazo_txt,
+                        )
+                        _tel_setor = (
+                            formatar_telefone_wame(_p.setor.whatsapp)
+                            if _p.setor and _p.setor.whatsapp
+                            else ""
+                        )
+                        _wame_url_setor = f"https://wa.me/{_tel_setor}?text={quote_plus(_msg_wa_setor)}"
+                        st.link_button("Envio WhatsApp", _wame_url_setor, use_container_width=True, key=f"wame_{_p.id}")
 
         # ── Link do Formulário de Solicitação ────────────────────────────────
         _link_form = gerar_link_formulario_generico()

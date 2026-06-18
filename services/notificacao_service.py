@@ -241,6 +241,23 @@ def enviar_feedback_aprovacao(
     )
 
 
+def gerar_mensagem_whatsapp_setor(
+    setor_nome: str,
+    periodo_label: str,
+    link_formulario: str,
+    prazo_txt: str,
+) -> str:
+    """Gera texto da mensagem WhatsApp para envio manual do formulário de solicitação a um setor."""
+    return (
+        f"Olá, *{setor_nome}*! 👋\n\n"
+        f"O ciclo de solicitações de materiais referente a *{periodo_label}* está aberto.\n\n"
+        f"Acesse o formulário abaixo para registrar as necessidades do seu setor "
+        f"até o dia *{prazo_txt}*:\n\n"
+        f"{link_formulario}\n\n"
+        f"Em caso de dúvidas, entre em contato conosco."
+    )
+
+
 def cotacao_configurada() -> bool:
     """Retorna True se o template de solicitação de cotação está configurado."""
     return bool(credenciais_configuradas() and WA_TEMPLATE_COTACAO)
