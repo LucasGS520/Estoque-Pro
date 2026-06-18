@@ -10,9 +10,10 @@ import streamlit as st
 from core.database import get_session_factory
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from core.ui import _CSS, _LOGO, section_title
-from services.ciclo_service import get_ciclo_por_periodo, marcar_setor_respondido
+from services.ciclo_service import get_ciclo_ativo, get_participante_por_token, marcar_setor_respondido
 from services.compras_service import criar_pedido_solicitacao, get_pedidos_setor_periodo
 from services.estoque_service import get_all_itens, get_setores
+import services.push_service as push_service
 
 # CSS global + ocultar sidebar
 st.markdown(_CSS, unsafe_allow_html=True)
@@ -32,9 +33,6 @@ MESES_PT = {
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
 }
 
-
-def _periodo_label(d: datetime.date) -> str:
-    return f"{MESES_PT[d.month]}/{d.year}"
 
 
 def _opcoes_periodo() -> list[datetime.date]:
@@ -93,41 +91,60 @@ with SessionLocal() as _s:
         for i in _itens_raw
     ]
 
-_hoje_sol = tempo.hoje()
-periodo_sel = datetime.date(_hoje_sol.year, _hoje_sol.month, 1)
-periodo_label_sol = f"{MESES_PT[_hoje_sol.month]}/{_hoje_sol.year}"
 categorias_disponiveis = ["Todas"] + sorted({i["categoria"] for i in catalogo})
 
 # ---------------------------------------------------------------------------
-# Verificação do ciclo — bloqueia o formulário se não houver ciclo aberto e válido
+# Resolução de identidade: token (setor fixo) ou acesso direto (setor pelo form)
 # ---------------------------------------------------------------------------
 
-with SessionLocal() as _sc:
-    _ciclo_check = get_ciclo_por_periodo(_sc, periodo_sel)
-    if _ciclo_check is not None:
-        _ciclo_status = _ciclo_check.status
-        _ciclo_prazo = _ciclo_check.prazo_resposta_em
-    else:
-        _ciclo_status = None
-        _ciclo_prazo = None
+def _exibir_link_invalido():
+    """Exibida apenas quando um token é fornecido mas não corresponde a nenhum ciclo."""
+    st.markdown(
+        "<div style='text-align:center;padding:48px 24px;'>"
+        "<div style='font-size:48px;margin-bottom:16px;'>🔗</div>"
+        "<h3 style='color:#262626;margin:0 0 8px;'>Link inválido</h3>"
+        "<p style='color:#737373;font-size:15px;margin:0;'>Este link não é válido ou já expirou. "
+        "Solicite um novo link ao responsável pelo setor de compras.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+_token_param = st.query_params.get("token")
+
+if _token_param:
+    # Caminho com token: setor e período identificados pelo ciclo vinculado
+    with SessionLocal() as _stk:
+        _part = get_participante_por_token(_stk, _token_param)
+        if _part is None:
+            _exibir_link_invalido()
+        _ciclo_status  = _part.ciclo.status
+        _ciclo_prazo   = _part.ciclo.prazo_resposta_em
+        periodo_sel    = _part.ciclo.periodo_referencia
+        _setor_fixo_id = _part.setor_id
+        _ciclo_check   = _part.ciclo.id  # id do ciclo para marcar_setor_respondido
+else:
+    # Caminho direto: setor escolhido no formulário, período determinado pelo ciclo aberto
+    _setor_fixo_id = None
+    with SessionLocal() as _stk:
+        _ciclo_obj = get_ciclo_ativo(_stk)
+        if _ciclo_obj is not None:
+            _ciclo_status = _ciclo_obj.status
+            _ciclo_prazo  = _ciclo_obj.prazo_resposta_em
+            _ciclo_check  = _ciclo_obj.id
+            periodo_sel   = _ciclo_obj.periodo_referencia
+        else:
+            _ciclo_status = None
+            _ciclo_prazo  = None
+            _ciclo_check  = None
+            periodo_sel   = _opcoes_periodo()[0]
+
+_setor_fixo_nome = next((nome for sid, nome in setores if sid == _setor_fixo_id), None)
+periodo_label_sol = f"{MESES_PT[periodo_sel.month]}/{periodo_sel.year}"
 
 _agora = tempo.agora()
 _prazo_vencido = _ciclo_prazo is not None and _ciclo_prazo < _agora
 _formulario_bloqueado = _ciclo_status != "aberto" or _prazo_vencido
-
-# Parâmetro de setor pré-definido vindo da URL (?setor=ID)
-_setor_param = st.query_params.get("setor")
-_setor_fixo_id: int | None = None
-_setor_fixo_nome: str | None = None
-if _setor_param:
-    try:
-        _sid = int(_setor_param)
-        _match = next((nome for sid, nome in setores if sid == _sid), None)
-        if _match:
-            _setor_fixo_id = _sid
-            _setor_fixo_nome = _match
-    except (ValueError, TypeError):
-        pass
 
 # ---------------------------------------------------------------------------
 # Cabeçalho — fundo escuro com logo (padrão da sidebar)
@@ -437,14 +454,17 @@ with st.container(border=True):
         qtd_novo = st.number_input("Quantidade *", min_value=1, value=1, step=1, key="inp_novo_qtd")
 
     obs_novo = st.text_input(
-        "Observação / Justificativa",
+        "Observação / Justificativa *",
         placeholder="Para que será usado? Há urgência? Referência de onde encontrar?",
         key="inp_novo_obs",
+        help="Obrigatório para itens não cadastrados.",
     )
 
     if st.button("＋ Adicionar ao Pedido", type="primary", key="btn_add_novo"):
         if not nome_novo.strip():
             st.error("Informe o nome do item.")
+        elif not obs_novo.strip():
+            st.error("A justificativa é obrigatória para itens não cadastrados. Explique para que será usado e se há urgência.")
         else:
             st.session_state["sol_itens"].append({
                 "tipo": "Novo",
@@ -564,12 +584,25 @@ if setor_id is not None and _ciclo_check is not None:
         ):
             try:
                 with SessionLocal() as _sn:
-                    marcar_setor_respondido(_sn, _ciclo_check.id, setor_id, sem_solicitacao=True)
+                    marcar_setor_respondido(_sn, _ciclo_check, setor_id, sem_solicitacao=True)
             except ValueError as _exc_sn:
                 st.warning(str(_exc_sn))
             else:
                 st.session_state["sol_sem_necessidade"] = True
                 st.rerun()
+
+if submitted:
+    # Revalida itens novos: justificativa obrigatória mesmo após edição na revisão
+    itens_sem_justificativa = [
+        item["nome"]
+        for idx, item in enumerate(itens_lista)
+        if item.get("item_id") is None
+        and not (st.session_state.get(f"obs_{idx}", item.get("observacao") or "")).strip()
+    ]
+    if itens_sem_justificativa:
+        for nome_faltante in itens_sem_justificativa:
+            st.error(f"Justificativa obrigatória para o item novo: **{nome_faltante}**. Preencha o campo 'Observação' na revisão acima.")
+        submitted = False
 
 if submitted:
     itens_create = [
@@ -599,6 +632,8 @@ if submitted:
         # Ciclo encerrado/prazo expirado entre o carregamento da página e o envio
         st.error(f"Não foi possível enviar a solicitação: {_exc_envio}")
     else:
+        _nome_setor_push = next((nome for sid, nome in setores if sid == setor_id), "Setor")
+        push_service.notificar_formulario_recebido(_nome_setor_push, periodo_label_sol)
         st.session_state["sol_enviada"] = True
         st.session_state["sol_confirmar_segundo_envio"] = False
         st.rerun()

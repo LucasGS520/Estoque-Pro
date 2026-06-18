@@ -24,6 +24,12 @@ DFEB_COLORS: dict[str, str] = {
     "orange": "#F59E0B",
 }
 
+# ── Config padrão Plotly (sem toolbar) ───────────────────────────────────────
+PLOTLY_CONFIG: dict = {
+    "displayModeBar": False,
+    "responsive": True,
+}
+
 # ── CSS global injetado em cada página ───────────────────────────────────────
 _CSS = """
 <style>
@@ -72,32 +78,6 @@ html, body, [class*="css"], .stApp {
 }
 [data-testid="stSidebar"] button:hover svg {
     fill: #FFFFFF !important;
-}
-
-/* ── Controle de REABRIR sidebar quando está colapsada ───────────── */
-/* O ícone "›" fica invisível (svg preto no fundo preto) sem esse fix */
-[data-testid="stSidebarCollapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    z-index: 99999 !important;
-    pointer-events: all !important;
-}
-[data-testid="stSidebarCollapsedControl"] > div,
-[data-testid="stSidebarCollapsedControl"] button {
-    background: #0A0A0A !important;
-    border-radius: 0 6px 6px 0 !important;
-    border: 1px solid #262626 !important;
-    border-left: none !important;
-    box-shadow: 2px 0 8px rgba(0,0,0,0.30) !important;
-}
-[data-testid="stSidebarCollapsedControl"] button {
-    color: #EBEBEB !important;
-}
-[data-testid="stSidebarCollapsedControl"] svg {
-    fill: #EBEBEB !important;
-    color: #EBEBEB !important;
-    stroke: #EBEBEB !important;
 }
 
 /* ── Botões primários ────────────────────────────────────────────────── */
@@ -221,10 +201,20 @@ hr {
 
 /* ── Chrome do Streamlit ─────────────────────────────────────────────── */
 footer { display: none !important; }
+/* ── Header mobile (hamburger) ──────────────────────────────────────── */
 header[data-testid="stHeader"] {
     background: transparent !important;
     border-bottom: none !important;
     box-shadow: none !important;
+    z-index: 888888 !important;
+    pointer-events: all !important;
+}
+header[data-testid="stHeader"] button {
+    pointer-events: all !important;
+    cursor: pointer !important;
+}
+header[data-testid="stHeader"] svg {
+    fill: #0A0A0A !important;
 }
 
 /* ── Links de navegação manuais (st.page_link) ───────────────────────── */
@@ -251,6 +241,44 @@ header[data-testid="stHeader"] {
 }
 [data-testid="stPageLink"] a[aria-current="page"] svg {
     fill: #E10600 !important;
+}
+
+/* ── Responsividade Mobile ──────────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Reduzir padding do conteúdo para aproveitar melhor a tela pequena */
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 0.5rem !important;
+    }
+    /* Métricas: fonte menor para caber em tela pequena */
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.3rem !important;
+    }
+    /* Botões: permitir quebra de linha em texto longo */
+    .stButton button {
+        white-space: normal !important;
+        height: auto !important;
+        min-height: 2.5rem !important;
+        line-height: 1.3 !important;
+    }
+    /* Divisor vertical fixo: ocultar em mobile para não bloquear scroll */
+    .dfeb-vert-sep {
+        display: none !important;
+    }
+}
+
+/* ── Separador Cadastro / Edição (visível somente em mobile) ─────────── */
+.dfeb-edit-divider {
+    display: none !important;
+    border: none !important;
+    border-top: 2px solid #E5E5E5 !important;
+    margin: 20px 0 8px !important;
+}
+@media (max-width: 768px) {
+    .dfeb-edit-divider {
+        display: block !important;
+    }
 }
 
 /* ── Ocultar botão de fullscreen em imagens na sidebar ───────────────── */
@@ -313,9 +341,13 @@ def status_badge(status: str) -> str:
     """Retorna HTML de badge para o status de um item de estoque."""
     _MAP: dict[str, tuple[str, str, str]] = {
         "ok":                  ("#DCFCE7", "#16A34A", "OK"),
-        "comprar":             ("#FEE2E2", "#E10600", "Comprar"),
-        "zerado":              ("#FEF3C7", "#F59E0B", "Zerado"),
-        "sem_minimo_definido": ("#F4F4F5", "#737373", "Sem Mínimo"),
+        "abaixo_minimo":       ("#FEF3C7", "#92400E", "Abaixo do Mínimo"),
+        "abaixo_ideal":        ("#FEFCE8", "#92400E", "Abaixo do Ideal"),
+        "zerado":              ("#FEE2E2", "#DC2626", "Zerado"),
+        "sem_parametro":       ("#F4F4F5", "#737373", "Sem Parâmetro"),
+        # aliases legados
+        "comprar":             ("#FEF3C7", "#92400E", "Abaixo do Mínimo"),
+        "sem_minimo_definido": ("#F4F4F5", "#737373", "Sem Parâmetro"),
     }
     bg, fg, label = _MAP.get(status, ("#F4F4F5", "#737373", status))
     return (
@@ -323,6 +355,22 @@ def status_badge(status: str) -> str:
         f"border-radius:4px;font-size:12px;font-weight:500;"
         f"display:inline-block;line-height:1.6;'>{label}</span>"
     )
+
+
+def colorir_linhas_status(row: "pd.Series", campo: str = "status") -> list[str]:
+    """Retorna lista de estilos CSS para Pandas Styler, colorindo por status operacional.
+
+    Aceita tanto valores brutos ('zerado', 'comprar') quanto rótulos de exibição
+    ('Zerado', 'A Comprar'), pois normaliza para minúsculas antes de comparar.
+    """
+    s = str(row.get(campo, "")).lower()
+    if s in ("zerado",):
+        return ["background-color: #ffdddd"] * len(row)
+    if s in ("abaixo_minimo", "abaixo do mínimo", "comprar", "a comprar"):
+        return ["background-color: #fffbcc"] * len(row)
+    if s in ("sem_parametro", "sem parâmetro", "sem_minimo", "sem limite", "sem_limite", "sem_minimo_definido"):
+        return ["background-color: #f5f5f5"] * len(row)
+    return [""] * len(row)
 
 
 def empty_state(icon: str, title: str, description: str = "") -> None:
@@ -431,12 +479,12 @@ def apply_chart_theme(fig, height: int = 320, showlegend: bool = False) -> None:
             color="#262626",
             size=12,
         ),
-        margin=dict(t=24, r=20, b=36, l=48),
+        margin=dict(t=56 if showlegend else 24, r=20, b=36, l=48),
         showlegend=showlegend,
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=-0.25,
+            y=1.02,
             xanchor="left",
             x=0,
             bgcolor="rgba(0,0,0,0)",
@@ -470,6 +518,12 @@ def gerar_link_formulario(setor_id: int) -> str:
     """Retorna a URL pública do formulário de solicitação pré-definido para um setor."""
     from core.config import APP_BASE_URL
     return f"{APP_BASE_URL}/solicitar?setor={setor_id}"
+
+
+def gerar_link_formulario_token(token: str) -> str:
+    """Retorna a URL pública do formulário usando token opaco (preferido sobre ?setor=ID)."""
+    from core.config import APP_BASE_URL
+    return f"{APP_BASE_URL}/solicitar?token={token}"
 
 
 def gerar_link_formulario_generico() -> str:

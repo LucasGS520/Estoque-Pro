@@ -236,6 +236,8 @@ class CicloSolicitacaoSetor(Base):
     notificacao_prazo_proximo_em  = Column(DateTime, nullable=True)
     notificacao_encerramento_em   = Column(DateTime, nullable=True)
     notificacao_feedback_em       = Column(DateTime, nullable=True)
+    # Token opaco para link público do formulário (?token=...)
+    token = Column(String(64), nullable=True, unique=True, index=True)
 
     __table_args__ = (UniqueConstraint("ciclo_id", "setor_id", name="uq_ciclo_setor"),)
 
@@ -386,6 +388,8 @@ class Orcamento(Base):
     enviado_em = Column(DateTime, nullable=True)
     decidido_em = Column(DateTime, nullable=True)
     observacao_diretor = Column(Text, nullable=True)
+    # Token opaco para link de aprovação enviado ao diretor (?token=...)
+    token_aprovacao = Column(String(64), nullable=True, unique=True, index=True)
     criado_em = Column(DateTime, default=tempo.agora)
     atualizado_em = Column(DateTime, default=tempo.agora, onupdate=tempo.agora)
 
@@ -482,3 +486,27 @@ class SolicitacaoCotacaoFornecedor(Base):
 
     orcamento = relationship("Orcamento")
     fornecedor = relationship("Fornecedor")
+
+
+class DevolucaoMaterial(Base):
+    """Registro de devolução de material por um setor ao estoque.
+
+    Produto devolvido fica em estado 'pendente' até que o responsável decida:
+    - reintegrar: cria Movimentacao tipo='entrada' e incrementa estoque_atual
+    - descartar: marca como descartado sem alterar estoque_atual
+    """
+
+    __tablename__ = "devolucoes_material"
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, ForeignKey("itens.id"), nullable=False)
+    setor_id = Column(Integer, ForeignKey("setores.id"), nullable=True)
+    quantidade = Column(Integer, nullable=False)
+    motivo = Column(Text, nullable=True)
+    # 'pendente' | 'reintegrada' | 'descartada'
+    status = Column(String(20), nullable=False, default="pendente")
+    criado_em = Column(DateTime, default=tempo.agora)
+    processado_em = Column(DateTime, nullable=True)
+
+    item = relationship("Item")
+    setor = relationship("Setor")

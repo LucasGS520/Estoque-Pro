@@ -69,6 +69,9 @@ def run_schema_migrations(engine):
         "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN motivo_falha VARCHAR(200)",
         # Fase 7: website do fornecedor (URL do site, suporta {query} para busca)
         "ALTER TABLE fornecedores ADD COLUMN website VARCHAR(500)",
+        # Fase 8 — deploy interno: tokens opacos para links públicos
+        "ALTER TABLE ciclo_solicitacao_setores ADD COLUMN token TEXT",
+        "ALTER TABLE orcamentos ADD COLUMN token_aprovacao TEXT",
     ]
     # Tabelas novas (CREATE TABLE IF NOT EXISTS é idempotente no SQLite)
     new_tables = [
@@ -84,6 +87,19 @@ def run_schema_migrations(engine):
             status VARCHAR(20) NOT NULL DEFAULT 'ENVIADO'
         )
         """,
+        # Fase 8: devoluções de material (novo fluxo pendente→reintegrada/descartada)
+        """
+        CREATE TABLE IF NOT EXISTS devolucoes_material (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL REFERENCES itens(id),
+            setor_id INTEGER REFERENCES setores(id),
+            quantidade INTEGER NOT NULL,
+            motivo TEXT,
+            status VARCHAR(20) NOT NULL DEFAULT 'pendente',
+            criado_em DATETIME,
+            processado_em DATETIME
+        )
+        """,
     ]
     with engine.connect() as conn:
         for stmt in new_columns:
@@ -97,6 +113,17 @@ def run_schema_migrations(engine):
         for stmt in new_tables:
             conn.execute(text(stmt))
             conn.commit()
+
+        # Índices únicos para tokens (WHERE token IS NOT NULL — não conflita com NULLs antigos)
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_ciclo_setor_token "
+            "ON ciclo_solicitacao_setores (token) WHERE token IS NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_orcamento_token_aprovacao "
+            "ON orcamentos (token_aprovacao) WHERE token_aprovacao IS NOT NULL"
+        ))
+        conn.commit()
 
         # Migração de dados: trata estoque_minimo/ideal legados como valores manuais.
         # Só migra linhas onde estoque_minimo_vigente ainda está zerado E estoque_minimo > 0.
@@ -165,6 +192,17 @@ def run_schema_migrations(engine):
             "UPDATE compras_avulsas SET quantidade = 1 "
             "WHERE quantidade IS NULL OR quantidade <= 0"
         ))
+        conn.commit()
+
+        # Descarta devoluções pendentes cujo item foi removido do catálogo.
+        # SQLite não impõe FK por padrão, então este cleanup idempotente garante
+        # que a aba Devoluções não exiba registros sem item vinculado.
+        conn.execute(text("""
+            UPDATE devolucoes_material
+            SET status = 'descartada', processado_em = datetime('now', 'localtime')
+            WHERE status = 'pendente'
+              AND item_id NOT IN (SELECT id FROM itens)
+        """))
         conn.commit()
 
     _migrar_timestamps_para_hora_local(engine)

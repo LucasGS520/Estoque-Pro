@@ -252,7 +252,7 @@ class StockAnalyzer:
                                       total_solicitado=qtd_total, saldo=saldo,
                                       motivo_sugestao=motivo)
 
-        if item.qtd_atual <= item.estoque_ideal:
+        if item.qtd_atual < item.estoque_ideal:
             tem_solicits = qtd_total > 0
             prox_minimo = (item.qtd_atual - item.estoque_minimo) <= max(item.estoque_minimo * 0.2, 2)
             # Sinal de consumo baseado em cobertura: só dispara quando o estoque atual
@@ -289,7 +289,7 @@ class StockAnalyzer:
                                       total_solicitado=qtd_total, saldo=saldo,
                                       motivo_sugestao=motivo)
 
-        # Item OK (atual > ideal): status sempre OK (reflete estoque físico atual).
+        # Item OK (atual >= ideal): status sempre OK (reflete estoque físico atual).
         # A qtd_recomendar usa demanda_liquida para capturar compras necessárias
         # por causa de solicitações aprovadas, sem distorcer o status visível.
         if demanda_liquida > 0:

@@ -1,4 +1,4 @@
-""" Tela de estoque, movimentações e cadastros.
+﻿""" Tela de estoque, movimentações e cadastros.
 
 Concentra consulta de itens, registro de entradas/saídas e manutenção de itens,
 fornecedores e categorias. As ações de escrita chamam serviços que fazem
@@ -10,9 +10,13 @@ import re
 import streamlit as st
 import pandas as pd
 
+from core.auth import require_admin
 from core.database import get_session_factory
-from core.ui import formatar_telefone, setup_page, page_header, section_title
+from core.ui import colorir_linhas_status, formatar_telefone, setup_page, page_header, section_title
 from services import estoque_service, fornecedor_service, calculos_service
+from services.estoque_service import (
+    registrar_devolucao, get_devolucoes, reintegrar_devolucao, descartar_devolucao,
+)
 
 
 def _formatar_telefone(tel: str):
@@ -34,6 +38,7 @@ def _validar_email(email: str) -> bool:
     return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email.strip()))
 
 setup_page("Estoque", "📋")
+require_admin()
 page_header("Estoque", subtitle="Consulta, movimentações e edição de itens, fornecedores e categorias.")
 
 # CSS para dar aparência de abas nativas aos st.radio usados como navegação
@@ -84,6 +89,32 @@ st.markdown("""
 [data-testid="stRadio"] [role="radiogroup"] > label:hover {
     color: rgba(49, 51, 63, 0.85) !important;
 }
+
+/* Mobile: tabs viram chips que quebram linha */
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #E10600 !important;
+        color: #E10600 !important;
+        background: rgba(225, 6, 0, 0.08) !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,7 +125,7 @@ if _fb := st.session_state.pop("_fb", None):
     getattr(st, _fb[0])(_fb[1])
 
 tab_sel = st.radio(
-    "Navegação", ["Visualizar", "Registrar Movimentação", "Editar"],
+    "Navegação", ["Visualizar", "Registrar Movimentação", "Devoluções", "Editar"],
     key="estoque_tab", horizontal=True, label_visibility="collapsed"
 )
 
@@ -122,12 +153,22 @@ if tab_sel == "Visualizar":
         if not busca_lower or busca_lower in r["item"].lower()
     ]
 
+    _STATUS_DISPLAY = {
+        "zerado":        "Zerado",
+        "abaixo_minimo": "Abaixo do Mínimo",
+        "abaixo_ideal":  "Abaixo do Ideal",
+        "sem_parametro": "Sem Parâmetro",
+        "ok":            "OK",
+    }
+    _STATUS_SORT = {"zerado": 0, "abaixo_minimo": 1, "abaixo_ideal": 2, "ok": 3, "sem_parametro": 4}
+
     df = pd.DataFrame([
         {
             "ID": r["id"],
             "Categoria": r["categoria"],
             "Item": r["item"],
             "Und.": r["unidade"],
+            "Status": _STATUS_DISPLAY.get(r["status"], r["status"]),
             "Atual": r["atual"],
             "Mínimo": r["minimo"],
             "Ideal": r["ideal"],
@@ -135,13 +176,24 @@ if tab_sel == "Visualizar":
                 r["ultima_mov_data"].strftime("%d/%m/%Y %H:%M")
                 if r["ultima_mov_data"] else "-"
             ),
-            "Tipo Mov.": r["ultima_mov_tipo"].capitalize() if r["ultima_mov_tipo"] else "-",
+            "Tipo Mov.": (
+                "↓ Entrada" if r["ultima_mov_tipo"] == "entrada"
+                else "↑ Saída" if r["ultima_mov_tipo"] == "saida"
+                else "-"
+            ),
+            "Setor": r["ultima_mov_setor"] or "" if r["ultima_mov_tipo"] == "saida" else "",
+            "Qtd. Mov.": str(r["ultima_mov_quantidade"]) if r["ultima_mov_quantidade"] is not None else "",
             "Fornecedor(es)": r["fornecedores"],
             "Obs.": r["observacoes"],
+            "_sort": _STATUS_SORT.get(r["status"], 99),
         }
         for r in filtradas
     ])
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    df = df.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
+    styled = df.style.apply(
+        lambda row: colorir_linhas_status(row, campo="Status"), axis=1
+    )
+    st.dataframe(styled, use_container_width=True, hide_index=True)
     total = len(master_rows)
     label = f"{len(filtradas)} itens exibidos"
     if len(filtradas) < total:
@@ -243,7 +295,161 @@ elif tab_sel == "Registrar Movimentação":
             except ValueError as e:
                 st.error(str(e))
 
-# ── Tab 3: Editar ─────────────────────────────────────────────────────────────
+# ── Tab 3: Devoluções ────────────────────────────────────────────────────────
+elif tab_sel == "Devoluções":
+    _dev_v = st.session_state.get("_dev_v", 0)
+
+    # Carrega dados sempre — a tabela de pendentes precisa renderizar independente do formulário
+    with SessionLocal() as session:
+        categorias_dev = estoque_service.get_categorias(session)
+        setores_dev = estoque_service.get_setores(session)
+        pendentes = get_devolucoes(session, status="pendente")
+
+    cat_opcoes_dev = {c.nome: c.id for c in categorias_dev}
+    setor_opcoes_dev = {s.nome: s.id for s in setores_dev}
+
+    # ── Formulário de registro ────────────────────────────────────────────────
+    section_title("Selecionar item de Devolução")
+
+    if not cat_opcoes_dev:
+        st.info("Nenhuma categoria cadastrada. Cadastre categorias na aba Editar antes de registrar devoluções.")
+    else:
+        cat_dev = st.selectbox(
+            "Categoria", list(cat_opcoes_dev.keys()),
+            index=None, placeholder="Selecione uma categoria de devolução...",
+            key=f"dev_cat_{_dev_v}",
+        )
+
+        if cat_dev is None:
+            st.info("Selecione uma categoria para continuar.")
+        else:
+            with SessionLocal() as session:
+                itens_dev = estoque_service.get_all_itens(session, categoria_id=cat_opcoes_dev[cat_dev])
+            item_opcoes_dev = {i.nome: i.id for i in itens_dev}
+            item_estoque_dev = {i.id: (i.estoque_atual, i.unidade) for i in itens_dev}
+
+            if not item_opcoes_dev:
+                st.info("Nenhum item cadastrado nesta categoria.")
+            else:
+                item_dev_sel = st.selectbox(
+                    "Item", list(item_opcoes_dev.keys()),
+                    index=None, placeholder="Selecione um item para devolver...",
+                    key=f"dev_item_{_dev_v}",
+                )
+
+                if item_dev_sel is None:
+                    st.info("Selecione um item para continuar.")
+                else:
+                    item_dev_id = item_opcoes_dev[item_dev_sel]
+                    estoque_dev, unidade_dev = item_estoque_dev.get(item_dev_id, (0, "un"))
+                    st.info(f"Estoque atual: **{estoque_dev} {unidade_dev}**")
+
+                    section_title("Dados da devolução")
+                    qtd_dev = st.number_input("Quantidade", min_value=1, value=1, key=f"dev_qtd_{_dev_v}")
+
+                    if not setor_opcoes_dev:
+                        st.warning("Nenhum setor cadastrado. Cadastre um setor na aba Editar > Setores antes de registrar devoluções.")
+                    else:
+                        setor_dev_sel = st.selectbox(
+                            "Setor que devolveu *", list(setor_opcoes_dev.keys()), key=f"dev_setor_{_dev_v}"
+                        )
+                        setor_dev_id = setor_opcoes_dev[setor_dev_sel]
+
+                    motivo_dev = st.text_input("Motivo (opcional)", key=f"dev_motivo_{_dev_v}")
+
+                    if st.button("Registrar devolução", key="btn_registrar_dev", type="primary", use_container_width=True):
+                        if not setor_opcoes_dev:
+                            st.error("Cadastre e selecione um setor para registrar uma devolução.")
+                        else:
+                            try:
+                                with st.spinner("Registrando..."):
+                                    with SessionLocal() as session:
+                                        registrar_devolucao(
+                                            session,
+                                            item_id=item_dev_id,
+                                            quantidade=int(qtd_dev),
+                                            setor_id=setor_dev_id,
+                                            motivo=motivo_dev or None,
+                                        )
+                                st.session_state["_dev_v"] = _dev_v + 1
+                                st.session_state["_fb"] = (
+                                    "success",
+                                    f"Devolução de **{item_dev_sel}** registrada e aguardando processamento.",
+                                )
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
+
+    # ── Tabela de itens devolvidos (sempre visível) ───────────────────────────
+    st.divider()
+    section_title(f"Itens Devolvidos — {len(pendentes)} pendente(s)")
+
+    if not pendentes:
+        st.info("Nenhuma devolução pendente no momento.")
+    else:
+        df_pendentes = pd.DataFrame([
+            {
+                "Categoria": dev.item.categoria.nome if (dev.item and dev.item.categoria) else "-",
+                "Item": dev.item.nome if dev.item else "(item removido)",
+                "Und.": dev.item.unidade if dev.item else "-",
+                "Qtd. Devolvida": dev.quantidade,
+                "Setor": dev.setor.nome if dev.setor else "-",
+                "Data": dev.criado_em.strftime("%d/%m/%Y %H:%M") if dev.criado_em else "-",
+                "Motivo": dev.motivo or "-",
+            }
+            for dev in pendentes
+        ])
+        st.dataframe(df_pendentes, use_container_width=True, hide_index=True)
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        section_title("Processar Devolução")
+
+        opcoes_proc = {
+            f"{d.item.nome if d.item else '(item removido)'} — {d.quantidade} {d.item.unidade if d.item else '?'} ({d.setor.nome if d.setor else '-'})": d.id
+            for d in pendentes
+        }
+        sel_proc = st.selectbox(
+            "Selecionar devolução para processar",
+            list(opcoes_proc.keys()),
+            index=None,
+            placeholder="Escolha uma devolução...",
+            key="dev_sel_proc",
+        )
+
+        col_reint, col_desc = st.columns(2)
+        with col_reint:
+            if st.button(
+                "Reintegrar ao Estoque",
+                disabled=not sel_proc,
+                use_container_width=True,
+                type="primary",
+                key="btn_reintegrar",
+            ):
+                try:
+                    with st.spinner("Reintegrando..."):
+                        with SessionLocal() as session:
+                            reintegrar_devolucao(session, devolucao_id=opcoes_proc[sel_proc])
+                    st.session_state["_fb"] = ("success", "Item reintegrado ao estoque com entrada registrada.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+        with col_desc:
+            if st.button(
+                "Descartar",
+                disabled=not sel_proc,
+                use_container_width=True,
+                key="btn_descartar_dev",
+            ):
+                try:
+                    with st.spinner("Descartando..."):
+                        with SessionLocal() as session:
+                            descartar_devolucao(session, devolucao_id=opcoes_proc[sel_proc])
+                    st.session_state["_fb"] = ("success", "Devolução descartada — item não retorna ao estoque.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+
+# ── Tab 4: Editar ─────────────────────────────────────────────────────────────
 elif tab_sel == "Editar":
     subtab_sel = st.radio(
         "Edição", ["Itens", "Categorias", "Setores", "Fornecedores"],
@@ -316,7 +522,7 @@ elif tab_sel == "Editar":
 
         with _sep_itens:
             st.markdown(
-                '<div style="width:2px; background:#dee2e6; height:1100px; margin:0 auto;"></div>',
+                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:1100px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -399,6 +605,7 @@ elif tab_sel == "Editar":
 
         # ── Editar / Remover item ─────────────────────────────────────────────
         with col_ei:
+            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
             section_title("Editar / Remover item")
 
             with SessionLocal() as session:
@@ -706,7 +913,7 @@ elif tab_sel == "Editar":
 
         with _sep_forn:
             st.markdown(
-                '<div style="width:2px; background:#dee2e6; height:650px; margin:0 auto;"></div>',
+                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:650px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -753,6 +960,7 @@ elif tab_sel == "Editar":
 
         # ── Editar / Remover fornecedor ───────────────────────────────────────
         with col_ef:
+            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
             section_title("Editar / Remover fornecedor")
 
             if not forn_data:
@@ -892,7 +1100,7 @@ elif tab_sel == "Editar":
 
         with _sep_cat:
             st.markdown(
-                '<div style="width:2px; background:#dee2e6; height:450px; margin:0 auto;"></div>',
+                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:450px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -924,6 +1132,7 @@ elif tab_sel == "Editar":
 
         # ── Editar / Remover categoria ────────────────────────────────────────
         with col_ec:
+            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
             section_title("Editar / Remover categoria")
 
             if not cat_data:
@@ -1060,7 +1269,7 @@ elif tab_sel == "Editar":
 
         with _sep_set:
             st.markdown(
-                '<div style="width:2px; background:#dee2e6; height:400px; margin:0 auto;"></div>',
+                '<div class="dfeb-vert-sep" style="width:2px; background:#dee2e6; height:400px; margin:0 auto;"></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1106,6 +1315,7 @@ elif tab_sel == "Editar":
 
         # ── Editar setor ──────────────────────────────────────────────────────
         with col_es:
+            st.markdown('<hr class="dfeb-edit-divider">', unsafe_allow_html=True)
             section_title("Editar setor")
 
             if not setor_data:

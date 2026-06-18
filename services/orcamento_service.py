@@ -10,6 +10,7 @@ CompraAvulsa (incluir_na_lista_final=True) — nunca run_analysis() ou snapshots
 
 import datetime
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -166,6 +167,15 @@ def get_orcamentos_periodo(session: Session, periodo: datetime.date) -> list[Orc
     )
 
 
+def get_count_orcamentos_aguardando(session: Session) -> int:
+    """Conta orçamentos aguardando decisão do diretor (ENVIADO_APROVACAO ou DEVOLVIDO_REVISAO)."""
+    return (
+        session.query(func.count(Orcamento.id))
+        .filter(Orcamento.status.in_(["ENVIADO_APROVACAO", "DEVOLVIDO_REVISAO"]))
+        .scalar() or 0
+    )
+
+
 def get_todos_periodos_orcamento(session: Session) -> list[datetime.date]:
     """Retorna os períodos que já possuem algum orçamento, do mais recente ao mais antigo."""
     rows = (
@@ -185,6 +195,18 @@ def get_orcamento_por_id(session: Session, orcamento_id: int) -> Optional[Orcame
             joinedload(Orcamento.itens).joinedload(ItemOrcamento.cotacoes),
         )
         .filter(Orcamento.id == orcamento_id)
+        .first()
+    )
+
+
+def get_orcamento_por_token(session: Session, token: str) -> Optional[Orcamento]:
+    """Carrega um orçamento pelo token de aprovação, com itens e cotações."""
+    return (
+        session.query(Orcamento)
+        .options(
+            joinedload(Orcamento.itens).joinedload(ItemOrcamento.cotacoes),
+        )
+        .filter(Orcamento.token_aprovacao == token)
         .first()
     )
 
@@ -608,6 +630,8 @@ def enviar_para_aprovacao(session: Session, orcamento_id: int) -> Orcamento:
             f"Os seguintes itens ainda não possuem cotações registradas: {lista}."
         )
 
+    if not orc.token_aprovacao:
+        orc.token_aprovacao = secrets.token_urlsafe(32)
     orc.status = "ENVIADO_APROVACAO"
     orc.enviado_em = tempo.agora()
     orc.atualizado_em = tempo.agora()
@@ -846,7 +870,7 @@ def deletar_orcamento(session: Session, orc_id: int) -> None:
     orc = session.get(Orcamento, orc_id)
     if orc is None:
         raise ValueError(f"Orçamento {orc_id} não encontrado.")
-    _DELETAVEIS = {"APROVADO", "APROVADO_PARCIAL", "REPROVADO", "CANCELADO", "DEVOLVIDO_REVISAO", "REVISAR"}
+    _DELETAVEIS = {"RASCUNHO", "APROVADO", "APROVADO_PARCIAL", "REPROVADO", "CANCELADO", "DEVOLVIDO_REVISAO", "REVISAR"}
     if orc.status not in _DELETAVEIS:
         raise ValueError(
             f"Não é possível excluir orçamento com status '{orc.status}'. Cancele-o primeiro."

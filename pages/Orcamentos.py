@@ -1,4 +1,4 @@
-"""Tela da camada de Orçamentos.
+﻿"""Tela da camada de Orçamentos.
 
 Gerencia o ciclo de cotação, comparação e aprovação a partir da Lista Final
 de Compras aprovada na camada anterior (Compras). Não recalcula análise de
@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from core import tempo
+from core.auth import require_admin
 from core.config import APP_BASE_URL
 from core.database import get_session_factory
 from core.models import CotacaoOrcamento, ItemListaCompra, ItemOrcamento, Orcamento
@@ -59,6 +60,7 @@ from services.orcamento_service import (
 from documents.orcamento import gerar_documento_cotacao
 
 setup_page("Orçamentos", "💰")
+require_admin()
 page_header("Orçamentos", subtitle="Cotação, comparação e aprovação da compra a partir da Lista Final.")
 
 SessionLocal = get_session_factory()
@@ -118,6 +120,32 @@ st.markdown("""
 }
 [data-testid="stRadio"] [role="radiogroup"] > label:hover {
     color: rgba(49, 51, 63, 0.85) !important;
+}
+
+/* Mobile: tabs viram chips que quebram linha */
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #E10600 !important;
+        color: #E10600 !important;
+        background: rgba(225, 6, 0, 0.08) !important;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -369,6 +397,7 @@ def _modal_editar_cotacao(cotacao_id: int) -> None:
         )
         data_edit = st.date_input(
             "Data da cotação *", value=_data, key=f"ec_data_{cotacao_id}",
+            format="DD/MM/YYYY",
         )
 
     c3, c4, c5 = st.columns(3)
@@ -739,15 +768,15 @@ if tab_sel == "Painel":
                         st.error(str(e), icon="⚠️")
 
         if orc.status == "ENVIADO_APROVACAO":
-            _link_aprov = f"{APP_BASE_URL}/Aprovacao_Orcamento?id={orc.id}"
+            _link_aprov = f"{APP_BASE_URL}/Aprovacao_Orcamento?token={orc.token_aprovacao}"
             _msg_aprov = gerar_mensagem_aprovacao(orc, _periodo_label, _link_aprov)
             _wame_aprov = f"https://wa.me/?text={quote_plus(_msg_aprov)}"
             st.info(
                 "Orçamento aguardando aprovação. Compartilhe o link com o responsável pela decisão.",
                 icon="🔗",
             )
-            st.link_button("📱 Enviar via WhatsApp", _wame_aprov, use_container_width=False)
-            st.caption("Link direto para aprovação:")
+            st.link_button("Enviar via WhatsApp", _wame_aprov, use_container_width=False)
+            st.caption("Link da Aprovação de Orçamento:")
             st.code(_link_aprov, language=None)
 
 
@@ -1082,6 +1111,7 @@ elif tab_sel == "Cotações":
                 "Data da cotação *",
                 value=tempo.hoje(),
                 key=f"cot_data_{item_sel_id}_{_fv}",
+                format="DD/MM/YYYY",
             )
 
         c3, c4, c5 = st.columns(3)
@@ -1106,7 +1136,7 @@ elif tab_sel == "Cotações":
 
         obs_cot = st.text_area(
             "Observação (opcional)",
-            height=60,
+            height=68,
             key=f"cot_obs_{item_sel_id}_{_fv}",
         )
 
@@ -1158,7 +1188,7 @@ elif tab_sel == "Cotações":
     st.divider()
     section_title("Solicitação a fornecedores")
 
-    _periodo_label_sol = periodo.strftime("%B/%Y").capitalize()
+    _periodo_label_sol = f"{_MESES_PT[periodo.month]}/{periodo.year}"
 
     with SessionLocal() as _s_sol:
         _grupos_sol = get_fornecedores_para_solicitacao(_s_sol, _orc_id)

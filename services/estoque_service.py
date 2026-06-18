@@ -17,6 +17,7 @@ from core.models import (
     Categoria,
     CicloSolicitacaoMaterial,
     CicloSolicitacaoSetor,
+    DevolucaoMaterial,
     Fornecedor,
     Item,
     Movimentacao,
@@ -24,6 +25,7 @@ from core.models import (
     SolicitacaoMaterial,
 )
 from core.ui import limpar_telefone
+import services.push_service as push_service
 
 
 def _normalizar(texto: str) -> str:
@@ -136,6 +138,15 @@ def registrar_movimentacao(
     item.atualizado_em = tempo.agora()
     session.commit()
     session.refresh(item)
+
+    # Notifica o responsável quando uma saída provoca mudança para status crítico (edge trigger)
+    if tipo == "saida":
+        _minimo = item.estoque_minimo_vigente or 0
+        if nova_qtd <= 0 and qtd_anterior > 0:
+            push_service.notificar_estoque_zerado(item.nome)
+        elif _minimo > 0 and nova_qtd < _minimo and qtd_anterior >= _minimo:
+            push_service.notificar_estoque_abaixo_minimo(item.nome, nova_qtd, _minimo)
+
     return item
 
 
@@ -169,7 +180,7 @@ def get_tabela_mestre(
         session.query(Item)
         .options(
             joinedload(Item.categoria),
-            selectinload(Item.movimentacoes),
+            selectinload(Item.movimentacoes).selectinload(Movimentacao.setor),
             selectinload(Item.fornecedores_associados),
         )
     )
@@ -188,12 +199,14 @@ def get_tabela_mestre(
         minimo_v = item.estoque_minimo_vigente
         ideal_v = item.estoque_ideal_vigente
         sem_limites = minimo_v == 0 and ideal_v == 0
-        if item.estoque_atual == 0 and not sem_limites:
+        if sem_limites:
+            status = "sem_parametro"
+        elif item.estoque_atual == 0:
             status = "zerado"
-        elif sem_limites:
-            status = "sem_minimo"
         elif item.estoque_atual <= minimo_v:
-            status = "comprar"
+            status = "abaixo_minimo"
+        elif item.estoque_atual <= ideal_v:
+            status = "abaixo_ideal"
         else:
             status = "ok"
 
@@ -212,6 +225,8 @@ def get_tabela_mestre(
             "status": status,
             "ultima_mov_data": ultima_mov.criado_em if ultima_mov else None,
             "ultima_mov_tipo": ultima_mov.tipo if ultima_mov else None,
+            "ultima_mov_quantidade": ultima_mov.quantidade if ultima_mov else None,
+            "ultima_mov_setor": ultima_mov.setor.nome if ultima_mov and ultima_mov.setor else None,
             "fornecedores": ", ".join(nomes_forn) if nomes_forn else "-",
             "observacoes": item.observacoes or "",
         })
@@ -572,3 +587,87 @@ def delete_setor(session: Session, setor_id: int, force: bool = False) -> int:
     session.delete(setor)
     session.commit()
     return mov_count
+
+
+# ---------------------------------------------------------------------------
+# Devoluções de material
+# ---------------------------------------------------------------------------
+
+def registrar_devolucao(
+    session: Session,
+    item_id: int,
+    quantidade: int,
+    setor_id: Optional[int] = None,
+    motivo: Optional[str] = None,
+) -> DevolucaoMaterial:
+    """Registra uma devolução pendente. NÃO altera estoque_atual."""
+    if quantidade <= 0:
+        raise ValueError("Quantidade deve ser maior que zero.")
+    item = session.get(Item, item_id)
+    if not item:
+        raise ValueError(f"Item {item_id} não encontrado.")
+    dev = DevolucaoMaterial(
+        item_id=item_id,
+        setor_id=setor_id,
+        quantidade=quantidade,
+        motivo=motivo,
+        status="pendente",
+        criado_em=tempo.agora(),
+    )
+    session.add(dev)
+    session.commit()
+    session.refresh(dev)
+    return dev
+
+
+def get_devolucoes(
+    session: Session,
+    status: Optional[str] = None,
+) -> list[DevolucaoMaterial]:
+    """Lista devoluções, opcionalmente filtradas por status."""
+    q = (
+        session.query(DevolucaoMaterial)
+        .options(
+            joinedload(DevolucaoMaterial.item).joinedload(Item.categoria),
+            joinedload(DevolucaoMaterial.setor),
+        )
+        .order_by(DevolucaoMaterial.criado_em.desc())
+    )
+    if status:
+        q = q.filter(DevolucaoMaterial.status == status)
+    return q.all()
+
+
+def reintegrar_devolucao(session: Session, devolucao_id: int) -> Item:
+    """Reintegra devolução ao estoque: cria Entrada e marca devolução como 'reintegrada'."""
+    dev = session.get(DevolucaoMaterial, devolucao_id)
+    if not dev:
+        raise ValueError(f"Devolução {devolucao_id} não encontrada.")
+    if dev.status != "pendente":
+        raise ValueError(f"Só devoluções pendentes podem ser reintegradas. Status atual: '{dev.status}'.")
+    item = registrar_movimentacao(
+        session=session,
+        item_id=dev.item_id,
+        tipo="entrada",
+        quantidade=dev.quantidade,
+        motivo=f"Reintegração de devolução #{dev.id}" + (f" — {dev.motivo}" if dev.motivo else ""),
+        setor_id=dev.setor_id,
+    )
+    dev.status = "reintegrada"
+    dev.processado_em = tempo.agora()
+    session.commit()
+    return item
+
+
+def descartar_devolucao(session: Session, devolucao_id: int) -> DevolucaoMaterial:
+    """Marca devolução como descartada. NÃO altera estoque_atual."""
+    dev = session.get(DevolucaoMaterial, devolucao_id)
+    if not dev:
+        raise ValueError(f"Devolução {devolucao_id} não encontrada.")
+    if dev.status != "pendente":
+        raise ValueError(f"Só devoluções pendentes podem ser descartadas. Status atual: '{dev.status}'.")
+    dev.status = "descartada"
+    dev.processado_em = tempo.agora()
+    session.commit()
+    session.refresh(dev)
+    return dev

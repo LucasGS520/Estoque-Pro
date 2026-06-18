@@ -1,4 +1,4 @@
-""" Tela da camada de Compras — governança da necessidade de compra.
+﻿""" Tela da camada de Compras — governança da necessidade de compra.
 
 Fluxo: seleção de período → solicitações (formulário externo /solicitar) →
 classificar → consolidar → revisar painel → lista final.
@@ -6,6 +6,7 @@ classificar → consolidar → revisar painel → lista final.
 
 import calendar
 import datetime
+from urllib.parse import quote_plus
 
 from core import tempo
 from collections import defaultdict
@@ -13,11 +14,13 @@ from collections import defaultdict
 import pandas as pd
 import streamlit as st
 
+from core.auth import require_admin
 from core.database import get_session_factory
 from core.ui import (
     empty_state,
     fmt_brl,
     gerar_link_formulario_generico,
+    gerar_link_formulario_token,
     page_header,
     section_title,
     setup_page,
@@ -50,6 +53,8 @@ from services.compras_service import (
 )
 from documents.lista_compras import gerar_lista_compras
 from services import notificacao_service
+from services.notificacao_service import gerar_mensagem_whatsapp_setor
+from services.orcamento_service import formatar_telefone_wame
 from services.ciclo_service import (
     abrir_ciclo,
     adicionar_setor_ao_ciclo,
@@ -67,6 +72,7 @@ from services.estoque_service import atualizar_fornecedores_item, get_all_itens,
 from services.fornecedor_service import get_all_fornecedores
 
 setup_page("Análise de Compras", "🛒")
+require_admin()
 page_header("Análise de Compras", subtitle="Preparação inteligente da lista de compras.")
 
 # ── CSS: st.radio como abas (mesmo padrão de todas as outras páginas) ──────────
@@ -107,6 +113,32 @@ st.markdown("""
 }
 [data-testid="stRadio"] [role="radiogroup"] > label:hover {
     color: rgba(49, 51, 63, 0.85) !important;
+}
+
+/* Mobile: tabs viram chips que quebram linha */
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #E10600 !important;
+        color: #E10600 !important;
+        background: rgba(225, 6, 0, 0.08) !important;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -624,6 +656,7 @@ elif aba == "Solicitações e Pendências":
         _prazo_atual  = _ciclo_prazo.date() if _ciclo_prazo else (hoje + datetime.timedelta(days=7))
         _abertura_txt = _ciclo_abertura.strftime("%d/%m/%Y") if _ciclo_abertura else "—"
         _prazo_txt    = _prazo_atual.strftime("%d/%m/%Y")
+        _prazo_vencido = _ciclo_prazo is not None and tempo.agora() > _ciclo_prazo
         _concluido_pct = int(_respondidos / _total_set * 100) if _total_set else 0
 
         @st.dialog(f"Encerrar coleta de {periodo_label}?")
@@ -667,14 +700,22 @@ elif aba == "Solicitações e Pendências":
 
         with st.container(border=True):
             # Cabeçalho
+            _badge_bg  = "#D97706" if _prazo_vencido else "#16A34A"
+            _badge_txt = "PRAZO EXPIRADO" if _prazo_vencido else "COLETA ABERTA"
             st.markdown(
                 f"**{periodo_label}**&nbsp;"
-                f"<span style='background:#16A34A;color:#fff;font-size:11px;"
-                f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>COLETA ABERTA</span>"
+                f"<span style='background:{_badge_bg};color:#fff;font-size:11px;"
+                f"font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px;'>{_badge_txt}</span>"
                 f"&nbsp;&nbsp;<span style='font-size:13px;color:#6B7280;'>"
                 f"Enviado em {_abertura_txt} · Prazo em {_prazo_txt}</span>",
                 unsafe_allow_html=True,
             )
+            if _prazo_vencido:
+                st.warning(
+                    "O prazo de resposta expirou. "
+                    "Os formulários dos setores estão bloqueados para novas respostas. "
+                    "Clique em **Encerrar coleta** para finalizar formalmente este ciclo."
+                )
 
             # Indicadores
             _ind1, _ind2, _ind3, _ind4 = st.columns(4)
@@ -738,7 +779,7 @@ elif aba == "Solicitações e Pendências":
                     _modal_remover_ciclo()
 
             # ── Banners de notificações automáticas ──────────────────────────
-            if notificacao_service.credenciais_configuradas() and _pendentes > 0:
+            if not _prazo_vencido and notificacao_service.credenciais_configuradas() and _pendentes > 0:
                 _agora_banner = tempo.agora()
                 _dias_desde_abertura = (_agora_banner - _ciclo_abertura).days if _ciclo_abertura else 0
 
@@ -803,7 +844,7 @@ elif aba == "Solicitações e Pendências":
             section_title("Status por Setor")
 
             _participantes_ord = sorted(_participantes, key=lambda p: p.setor.nome if p.setor else "")
-            _sh1, _sh2, _sh3, _sh4 = st.columns([3, 2, 4, 1])
+            _sh1, _sh2, _sh3, _sh4 = st.columns([3, 2, 3, 2])
             _sh1.caption("Setor")
             _sh2.caption("Resposta")
             _sh3.caption("Notificação")
@@ -835,7 +876,7 @@ elif aba == "Solicitações e Pendências":
                     _notif_txt   = "— Não enviado"
                     _notif_color = "#6B7280"
 
-                _pc1, _pc2, _pc3, _pc4 = st.columns([3, 2, 4, 1])
+                _pc1, _pc2, _pc3, _pc4 = st.columns([3, 2, 3, 2])
                 _pc1.markdown(f"🏢 **{_pnome}**")
                 _pc2.markdown(_resp_txt)
                 _pc3.markdown(
@@ -843,18 +884,38 @@ elif aba == "Solicitações e Pendências":
                     unsafe_allow_html=True,
                 )
                 with _pc4:
-                    if _p.motivo_falha != "sem_whatsapp":
-                        if st.button("Reenviar", key=f"reenviar_{_p.id}", use_container_width=True):
-                            try:
-                                with SessionLocal() as _rs:
-                                    reenviar_notificacao_setor(_rs, _ciclo_id, _p.setor_id)
-                                st.rerun()
-                            except ValueError as _rve:
-                                st.error(str(_rve))
+                    _btn_rev, _btn_wa = st.columns(2)
+                    with _btn_rev:
+                        if _p.motivo_falha != "sem_whatsapp":
+                            if st.button("Reenviar", key=f"reenviar_{_p.id}", use_container_width=True):
+                                try:
+                                    with SessionLocal() as _rs:
+                                        reenviar_notificacao_setor(_rs, _ciclo_id, _p.setor_id)
+                                    st.rerun()
+                                except ValueError as _rve:
+                                    st.error(str(_rve))
+                    with _btn_wa:
+                        _link_form_setor = (
+                            gerar_link_formulario_token(_p.token)
+                            if _p.token
+                            else gerar_link_formulario_generico()
+                        )
+                        _msg_wa_setor = gerar_mensagem_whatsapp_setor(
+                            _pnome, periodo_label, _link_form_setor, _prazo_txt,
+                        )
+                        _tel_setor = (
+                            formatar_telefone_wame(_p.setor.whatsapp)
+                            if _p.setor and _p.setor.whatsapp
+                            else ""
+                        )
+                        _wame_url_setor = f"https://wa.me/{_tel_setor}?text={quote_plus(_msg_wa_setor)}"
+                        st.link_button("Envio WhatsApp", _wame_url_setor, use_container_width=True)
 
-        # ── Link avulso ───────────────────────────────────────────────────────
-        st.caption("Link avulso (sem setor pré-definido):")
-        st.code(gerar_link_formulario_generico(), language=None)
+        # ── Link do Formulário de Solicitação ────────────────────────────────
+        _link_form = gerar_link_formulario_generico()
+        st.markdown("---")
+        st.caption("Link do Formulário:")
+        st.code(_link_form, language=None)
 
         # ── Setores não incluídos neste ciclo ────────────────────────────────
         with SessionLocal() as _snc:
