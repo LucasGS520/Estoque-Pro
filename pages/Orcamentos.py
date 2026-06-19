@@ -4,7 +4,7 @@ import datetime
 import streamlit as st
 
 from core.auth import require_admin
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.i18n import MESES_PT_LISTA as _MESES_PT
 from core.ui import empty_state, inject_tabs_css, page_header, setup_page
 from services.compras_service import get_periodos_com_consolidacao

@@ -13,7 +13,7 @@ streamlit run app.py
 # Disponível em http://localhost:8501
 ```
 
-O banco `data/estoque.db` é criado automaticamente na primeira execução. Nenhuma suíte de testes ou ferramenta de lint está configurada.
+O banco `storage/estoque.db` é criado automaticamente na primeira execução. Nenhuma suíte de testes ou ferramenta de lint está configurada.
 
 ### Links Públicos (gerados via APP_BASE_URL)
 - Formulário de Solicitação (setores): `$APP_BASE_URL/solicitar`
@@ -21,7 +21,7 @@ O banco `data/estoque.db` é criado automaticamente na primeira execução. Nenh
 
 ## Arquitetura
 
-Aplicação Streamlit multipágina para gestão de estoque, compras, ciclo mensal de solicitações de materiais e orçamentos. Usa SQLite via SQLAlchemy 2.0. O arquivo de dados fica em `data/estoque.db` (criado automaticamente na primeira execução; migrações de schema idempotentes rodam em `init_db()`).
+Aplicação Streamlit multipágina para gestão de estoque, compras, ciclo mensal de solicitações de materiais e orçamentos. Usa SQLite via SQLAlchemy 2.0. O arquivo de dados fica em `storage/estoque.db` (criado automaticamente na primeira execução; migrações de schema idempotentes rodam em `init_db()`).
 
 **Camadas:**
 
@@ -41,21 +41,22 @@ Aplicação Streamlit multipágina para gestão de estoque, compras, ciclo mensa
   - `calculos_service.py` — revisão mensal automática de mínimo/ideal (persiste `RevisaoMensal`) e overrides manuais.
   - `orcamento_service.py` — ciclo completo de orçamento a partir da Lista Final: criação de snapshot versionado, CRUD de cotações (`add_cotacao`, `editar_cotacao`, `remover_cotacao`, `escolher_cotacao`), resumo financeiro (`get_resumo`, `ResumoOrcamento`), fluxo de aprovação (`enviar_para_aprovacao`, `registrar_decisao_diretor`, `criar_nova_versao`), sincronização com Lista Final (`sincronizar_com_lista_final`) e helpers WhatsApp para solicitação de cotação a fornecedores (`gerar_mensagem_whatsapp`, `registrar_solicitacao_enviada`).
   - `relatorio_service.py` — DataFrames para relatórios.
-- **`core/`** — Infraestrutura:
-  - `database.py` — Engine singleton do SQLAlchemy, `get_session_factory()`, `init_db()` e `run_schema_migrations()` (ALTERs idempotentes por fase numerada, saneamento de pedidos órfãos e migração única de timestamps UTC→hora local, com backup automático e marcador em `schema_meta`). Fase 7 adicionada: coluna `website` em `fornecedores` + tabelas da camada de orçamentos.
-  - `models.py` — Modelos ORM: `Categoria`, `Item`, `Fornecedor` (+ campo `website`), `PrecoFornecedor`, `Setor`, `Movimentacao`, `SnapshotAnalise`, `RevisaoMensal`, `CicloSolicitacaoMaterial`, `CicloSolicitacaoSetor`, `SolicitacaoPedido`, `SolicitacaoMaterial`, `CompraAvulsa`, `ItemListaCompra`, `Importacao`. **Camada de orçamentos (novos):** `Orcamento`, `ItemOrcamento`, `CotacaoOrcamento`, `SolicitacaoCotacaoFornecedor`.
+- **`data/`** — Persistência:
+  - `config.py` — Caminhos de storage (`STORAGE_DIR`, `DB_PATH`, `DATABASE_URL`, `EXPORTS_DIR`, `UPLOADS_DIR`).
+  - `database.py` — Engine singleton do SQLAlchemy, `get_session_factory()`, `init_db()` e `run_schema_migrations()` (ALTERs idempotentes por fase numerada, saneamento de pedidos órfãos e migração única de timestamps UTC→hora local, com backup automático e marcador em `schema_meta`).
+  - `models.py` — Modelos ORM: `Categoria`, `Item`, `Fornecedor` (+ campo `website`), `PrecoFornecedor`, `Setor`, `Movimentacao`, `SnapshotAnalise`, `RevisaoMensal`, `CicloSolicitacaoMaterial`, `CicloSolicitacaoSetor`, `SolicitacaoPedido`, `SolicitacaoMaterial`, `CompraAvulsa`, `ItemListaCompra`. **Camada de orçamentos:** `Orcamento`, `ItemOrcamento`, `CotacaoOrcamento`, `SolicitacaoCotacaoFornecedor`.
+- **`core/`** — Infraestrutura de aplicação:
   - `schemas.py` — Schemas Pydantic para validação de entrada (usados antes da persistência).
   - `engine.py` — Motor **sem estado** de análise de reposição (`StockAnalyzer`). Sem dependências de banco de dados ou Streamlit. Três variantes: `calcular_status_puro` (Painel de Reposição), `calcular_status_consolidado` (Análise de Compras, cruza estoque com solicitações aprovadas) e `calcular_status` (legada). Seguro para testar diretamente com testes unitários.
   - `calculos.py` — Cálculo estatístico da revisão mensal (mediana/percentis de consumo, janela de análise). Também sem estado.
   - `tempo.py` — Helpers de data/hora: `tempo.agora()` e `tempo.hoje()`. **Política de fuso: todo o sistema opera em hora local de Brasília (America/Sao_Paulo), naive.** Nunca usar `utcnow()`, `now()` ou `date.today()` diretos.
   - `ui.py` — Utilitários compartilhados do Streamlit: CSS, cabeçalhos, badges, formatação BRL, tema Plotly, link do formulário público.
-  - `config.py` — Constantes de caminho (`DATA_DIR`, `EXPORTS_DIR`, `UPLOADS_DIR`) e variáveis de ambiente: `APP_BASE_URL` (links do formulário e aprovação) e credenciais WhatsApp `WA_ACCESS_TOKEN`, `WA_PHONE_NUMBER_ID`, `WA_TEMPLATE_*`, `WA_TEMPLATE_LANG`.
-- **`documents/`** — Geração de DOCX via python-docx. Exportações salvas em `data/exports/` com timestamps.
+  - `config.py` — Variáveis de ambiente da aplicação: `APP_BASE_URL` (links do formulário e aprovação), senha administrativa, credenciais WhatsApp `WA_ACCESS_TOKEN`, `WA_PHONE_NUMBER_ID`, `WA_TEMPLATE_*`, `WA_TEMPLATE_LANG` e ntfy.
+- **`documents/`** — Geração de DOCX via python-docx. Exportações salvas em `storage/exports/` com timestamps.
   - `lista_compras.py` — documento da Lista Final de Compras.
   - `orcamento.py` — `gerar_documento_cotacao`: documento de cotação para aprovação do diretor, com resumo financeiro, tabela por categoria e cotações alternativas.
   - `relatorio_categoria.py`, `relatorio_consumo.py`, `relatorio_historico.py`, `relatorio_item.py`, `relatorio_setor.py` — geradores DOCX para cada aba da página de Relatórios.
-- **`migration/`** — CLI de importação única de Excel→SQLite (parse → transform → load).
-- **`docs/`** — Documentação detalhada: `STACK_PROJETO.md` (stack e organização), `LOGICAS_CALCULOS.md` (fórmulas de parâmetros e reposição), `INTEGRAR_WHATS.md` (ciclo de solicitações + integração WhatsApp).
+- **`storage/`** — Artefatos runtime ignorados pelo Git: banco SQLite, uploads, exports e backups.
 
 ## Modelo de Dados Principal
 
@@ -107,7 +108,7 @@ Setor 1──M Movimentacao / SolicitacaoPedido
 
 ## Sessões
 
-Os serviços usam `get_session_factory()` de `core/database.py`. Padrão:
+Os serviços usam `get_session_factory()` de `data/database.py`. Padrão:
 
 ```python
 SessionLocal = get_session_factory()

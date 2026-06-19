@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 from core import tempo
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.ui import APP_COLORS, PLOTLY_CONFIG, apply_chart_theme, chart_title, empty_state, section_title
 from documents.relatorio_categoria import gerar_relatorio_categoria
 from services.relatorio_service import consumo_por_categoria

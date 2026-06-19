@@ -4,7 +4,7 @@ import re
 import pandas as pd
 import streamlit as st
 
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.ui import formatar_telefone, section_title
 from services import calculos_service, estoque_service, fornecedor_service
 

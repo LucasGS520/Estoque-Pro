@@ -12,7 +12,7 @@ from docx.shared import Cm, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core import tempo
-from core.models import Orcamento
+from data.models import Orcamento
 from documents.base_doc import (
     adicionar_tabela,
     criar_documento,

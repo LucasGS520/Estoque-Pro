@@ -1,7 +1,7 @@
 """Aba Registrar Movimentação — página Estoque."""
 import streamlit as st
 
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.ui import section_title
 from services import estoque_service
 

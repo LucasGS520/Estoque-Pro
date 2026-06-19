@@ -7,7 +7,7 @@ Aplicação web (Streamlit + SQLite/SQLAlchemy 2.0) para gestão de estoque, cic
 - **Estoque** — itens, categorias, setores, fornecedores, movimentações de entrada/saída e parâmetros mínimo/ideal (manuais ou calculados automaticamente por revisão mensal).
 - **Ciclo de Solicitações** — abertura mensal de coleta por setor, com notificação via WhatsApp (Meta Cloud API) contendo o link do formulário público (`Solicitar`); lembretes, aviso de prazo, encerramento e feedback.
 - **Análise de Compras** — triagem das solicitações, consolidação do período (cruza estoque real com demanda aprovada) e governança da Lista Final.
-- **Orçamentos e Relatórios** — cotações por fornecedor, melhor preço, consolidação de orçamento e relatórios de consumo; exportações em DOCX (`data/exports/`).
+- **Orçamentos e Relatórios** — cotações por fornecedor, melhor preço, consolidação de orçamento e relatórios de consumo; exportações em DOCX (`storage/exports/`).
 
 ## Como executar
 
@@ -17,7 +17,9 @@ streamlit run app.py
 # Disponível em http://localhost:8501
 ```
 
-O banco `data/estoque.db` é criado automaticamente na primeira execução. Migrações de schema são idempotentes e rodam na inicialização (backups automáticos em `data/*.bak` quando há migração de dados).
+O banco `storage/estoque.db` é criado automaticamente na primeira execução. Migrações de schema são idempotentes e rodam na inicialização.
+
+Se você tem um banco local antigo em `data/estoque.db`, copie manualmente esse arquivo para `storage/estoque.db` antes de iniciar o app. O sistema não migra esse arquivo automaticamente.
 
 ## Variáveis de ambiente
 
@@ -33,12 +35,10 @@ Sem credenciais WhatsApp configuradas, o sistema funciona normalmente — os env
 
 ## Convenções importantes
 
-- **Camadas**: `pages/` (UI) → `services/` (lógica e banco) → `core/` (infra, modelos, motor de análise). Páginas nunca acessam o banco diretamente.
+- **Camadas**: `pages/` (UI) → `services/` (lógica e banco) → `data/` (persistência SQLite/SQLAlchemy) e `core/` (configuração de app, schemas, motor de análise, UI compartilhada). Páginas nunca acessam o banco diretamente.
 - **Fuso horário**: todo o sistema opera em hora local de Brasília via `core/tempo.py` (`tempo.agora()` / `tempo.hoje()`). Não usar `datetime.now()`/`utcnow()`/`date.today()` diretos.
 
 ## Documentação
 
-- [docs/STACK_PROJETO.md](docs/STACK_PROJETO.md) — stack, organização de arquivos e modelo de dados.
-- [docs/LOGICAS_CALCULOS.md](docs/LOGICAS_CALCULOS.md) — fórmulas de parâmetros (mínimo/ideal) e do motor de reposição.
-- [docs/INTEGRAR_WHATS.md](docs/INTEGRAR_WHATS.md) — ciclo de solicitações ponta a ponta e configuração da integração WhatsApp.
+- [STACK_PROJETO.md](STACK_PROJETO.md) — stack, organização de arquivos e modelo de dados.
 - [CLAUDE.md](CLAUDE.md) — guia de arquitetura para desenvolvimento assistido.

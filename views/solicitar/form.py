@@ -5,7 +5,7 @@ import datetime
 import streamlit as st
 
 from core import tempo
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.i18n import MESES_PT
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from core.ui import _CSS, _LOGO, section_title

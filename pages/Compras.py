@@ -6,7 +6,7 @@ import streamlit as st
 
 from core import tempo
 from core.auth import require_admin
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.i18n import MESES_PT_LISTA as _MESES_PT_LISTA
 from core.ui import inject_tabs_css, page_header, section_title, setup_page
 from services.compras_service import (

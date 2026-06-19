@@ -9,7 +9,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from core.models import (
+from data.models import (
     CicloSolicitacaoMaterial,
     CicloSolicitacaoSetor,
     CompraAvulsa,
@@ -271,7 +271,7 @@ def adicionar_setor_ao_ciclo(
     if existente:
         raise ValueError("Este setor já está incluído no ciclo.")
 
-    from core.models import Setor
+    from data.models import Setor
     setor = session.get(Setor, setor_id)
 
     participante = CicloSolicitacaoSetor(
@@ -312,7 +312,7 @@ def reenviar_notificacao_setor(
     if not participante:
         raise ValueError("Participante não encontrado no ciclo.")
 
-    from core.models import Setor
+    from data.models import Setor
     setor = session.get(Setor, setor_id)
 
     _enviar_e_registrar(session, participante, setor, ciclo.periodo_referencia, ciclo.prazo_resposta_em)
@@ -473,7 +473,7 @@ def enviar_feedbacks_aprovacao(
     Retorna contagens: {enviados, falhas_api, sem_whatsapp}.
     """
     from services import notificacao_service
-    from core.models import Setor
+    from data.models import Setor
 
     ciclo = session.query(CicloSolicitacaoMaterial).filter_by(id=ciclo_id).first()
     if not ciclo:

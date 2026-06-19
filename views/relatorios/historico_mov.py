@@ -4,8 +4,8 @@ import datetime
 import streamlit as st
 
 from core import tempo
-from core.database import get_session_factory
-from core.models import Categoria as CategoriaModel, Item
+from data.database import get_session_factory
+from data.models import Categoria as CategoriaModel, Item
 from core.ui import empty_state, section_title
 from documents.relatorio_historico import gerar_relatorio_historico
 from services.estoque_service import get_setores

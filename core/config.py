@@ -1,7 +1,6 @@
-""" Constantes de caminho e URL usadas pela aplicação.
+"""Configurações de aplicação carregadas por variáveis de ambiente.
 
-Centraliza diretórios operacionais, arquivo SQLite e pastas de exportação para
-evitar caminhos duplicados entre app, serviços, documentos e migração.
+Configurações de banco e storage ficam em `data.config`.
 """
 
 import os
@@ -14,12 +13,6 @@ BASE_DIR = Path(__file__).parent.parent
 
 # Carrega o .env da raiz do projeto antes de qualquer os.getenv()
 load_dotenv(BASE_DIR / ".env")
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "estoque.db"
-DATABASE_URL = f"sqlite:///{DB_PATH}"
-EXPORTS_DIR = DATA_DIR / "exports"
-UPLOADS_DIR = DATA_DIR / "uploads"
-DOCS_DIR = BASE_DIR / "docs"
 
 # URL pública da aplicação — usada para gerar links dos formulários enviados aos setores.
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from core import tempo
 import json
 
-from core.models import (
+from data.models import (
     CotacaoOrcamento,
     Fornecedor,
     ItemListaCompra,

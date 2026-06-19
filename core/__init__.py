@@ -1,4 +1,4 @@
-"""Pacote central do sistema de estoque.
+"""Infraestrutura de aplicação do sistema de estoque.
 
-Agrupa configuração, banco, modelos, schemas, motor de análise e helpers de UI.
+Banco, modelos e caminhos de storage ficam no pacote `data`.
 """

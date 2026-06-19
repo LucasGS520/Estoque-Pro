@@ -13,11 +13,11 @@ build/
 .env
 
 # Dados gerados em runtime
-data/estoque.db
-data/uploads/
-data/exports/
-!data/uploads/.gitkeep
-!data/exports/.gitkeep
+storage/estoque.db
+storage/*.bak
+storage/uploads/
+storage/exports/
+storage/backups/
 
 # IDE
 .vscode/

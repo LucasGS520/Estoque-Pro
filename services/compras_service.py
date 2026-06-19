@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 from core.engine import (
     AnalysisResult, AnalysisSummary, ItemRecord, SolicitacaoRecord, StockAnalyzer,
 )
-from core.models import CompraAvulsa, CicloSolicitacaoMaterial, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, Movimentacao, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
+from data.models import CompraAvulsa, CicloSolicitacaoMaterial, CicloSolicitacaoSetor, Fornecedor, Item, ItemListaCompra, Movimentacao, RevisaoMensal, SnapshotAnalise, SolicitacaoMaterial, SolicitacaoPedido
 from core.schemas import SolicitacaoMaterialCreate, SolicitacaoPedidoCreate
 from services.fornecedor_service import get_best_price, get_best_prices_bulk
 

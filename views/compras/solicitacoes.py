@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 import streamlit as st
 
 from core import tempo
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.ui import empty_state, gerar_link_formulario_generico, gerar_link_formulario_token, section_title
 from services import notificacao_service
 from services.notificacao_service import gerar_mensagem_whatsapp_setor

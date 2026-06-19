@@ -12,7 +12,7 @@ from typing import Optional
 import pandas as pd
 from sqlalchemy.orm import Session, joinedload
 
-from core.models import Categoria, Item, Movimentacao, Setor
+from data.models import Categoria, Item, Movimentacao, Setor
 
 
 def consumo_por_mes(session: Session, item_id: Optional[int] = None) -> pd.DataFrame:

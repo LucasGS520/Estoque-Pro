@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.engine import ItemRecord, ItemStatus, StockAnalyzer
 from core.ui import (
     PLOTLY_CONFIG,

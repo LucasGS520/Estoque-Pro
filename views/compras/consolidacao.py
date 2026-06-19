@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from core import tempo
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.ui import empty_state, section_title
 from documents.lista_compras import gerar_lista_compras
 from services import notificacao_service

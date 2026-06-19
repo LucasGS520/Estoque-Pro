@@ -12,7 +12,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from core.models import Fornecedor, PrecoFornecedor, Item
+from data.models import Fornecedor, PrecoFornecedor, Item
 
 
 def get_all_fornecedores(session: Session, apenas_ativos: bool = True) -> list[Fornecedor]:
@@ -188,13 +188,13 @@ def delete_fornecedor(session: Session, forn_id: int) -> None:
     session.query(PrecoFornecedor).filter_by(fornecedor_id=forn_id).delete()
 
     # Nulifica referências em snapshots de análise
-    from core.models import SnapshotAnalise
+    from data.models import SnapshotAnalise
     session.query(SnapshotAnalise).filter_by(fornecedor_sugerido_id=forn_id).update(
         {"fornecedor_sugerido_id": None}
     )
 
     # Nulifica FK em cotações de orçamento (preserva o campo origem/texto)
-    from core.models import CotacaoOrcamento
+    from data.models import CotacaoOrcamento
     session.query(CotacaoOrcamento).filter_by(fornecedor_id=forn_id).update(
         {"fornecedor_id": None}
     )

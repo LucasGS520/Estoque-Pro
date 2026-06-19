@@ -7,8 +7,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from core import tempo
-from core.database import get_session_factory
-from core.models import (
+from data.database import get_session_factory
+from data.models import (
     CompraAvulsa,
     CotacaoOrcamento,
     ItemListaCompra,

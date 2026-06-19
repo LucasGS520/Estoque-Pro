@@ -10,8 +10,8 @@ from core import tempo
 
 import streamlit as st
 
-from core.database import init_db, get_session_factory
-from core.config import EXPORTS_DIR, UPLOADS_DIR
+from data.database import init_db, get_session_factory
+from data.config import EXPORTS_DIR, UPLOADS_DIR
 from core.ui import _CSS, _LOGO
 
 # ── Configuração global única ─────────────────────────────────────────────────

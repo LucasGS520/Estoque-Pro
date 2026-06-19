@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from core.calculos import calcular_revisao_item, calcular_janela
-from core.models import Item, Movimentacao, RevisaoMensal
+from data.models import Item, Movimentacao, RevisaoMensal
 
 
 def _get_movimentacoes_periodo(

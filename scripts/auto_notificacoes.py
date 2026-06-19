@@ -22,8 +22,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.database import get_session_factory, init_db
-from core.models import CicloSolicitacaoMaterial
+from data.database import get_session_factory, init_db
+from data.models import CicloSolicitacaoMaterial
 from core import tempo
 from services.ciclo_service import enviar_lembretes_pendentes, enviar_avisos_prazo_proximo
 

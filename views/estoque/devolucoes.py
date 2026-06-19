@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from core.database import get_session_factory
+from data.database import get_session_factory
 from core.ui import section_title
 from services import estoque_service
 from services.estoque_service import descartar_devolucao, get_devolucoes, registrar_devolucao, reintegrar_devolucao

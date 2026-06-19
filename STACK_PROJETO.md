@@ -5,7 +5,7 @@
 A única fonte de dados operacional do projeto é:
 
 ```
-data/estoque.db
+storage/estoque.db
 ```
 
 Fluxo operacional:
@@ -17,13 +17,7 @@ SQLite
   → documents/
 ```
 
-Importação eventual de planilhas externas (não é fluxo contínuo):
-
-```
-planilha externa temporária
-  → migration/
-  → SQLite
-```
+Arquivos gerados em runtime ficam em `storage/`; código de persistência fica no pacote Python `data/`.
 
 ---
 
@@ -39,7 +33,6 @@ planilha externa temporária
 | Documentos | python-docx | Geração de lista de compras e orçamentos em `.docx` |
 | Notificações | Meta WhatsApp Cloud API (requests) | Envio de formulários e notificações de ciclo para os setores |
 | Variáveis de ambiente | python-dotenv | Carregamento de credenciais e configurações sensíveis via `.env` |
-| Importação avulsa | openpyxl + pandas | Leitura de planilhas externas na migração inicial |
 
 ---
 
@@ -68,28 +61,29 @@ services/
   relatorio_service.py    Montagem de DataFrames para relatórios
   calculos_service.py     Serviços auxiliares de cálculo
 
-core/
+data/
+  config.py               Caminhos de storage, DATABASE_URL, exports e uploads
   database.py             Engine singleton SQLAlchemy + get_session_factory() + migrações idempotentes
-  models.py               Modelos ORM: todas as tabelas do banco
+  models.py               Modelos ORM: todas as tabelas operacionais do banco
+
+core/
   schemas.py              Schemas Pydantic para validação de entrada
   engine.py               Motor de análise de reposição (sem estado, testável isolado)
   calculos.py             Cálculo estatístico da revisão mensal (sem estado)
   tempo.py                Helpers de data/hora — tempo.agora() / tempo.hoje() em hora de Brasília
   ui.py                   CSS global, cabeçalhos, badges, formatação BRL, geração de links
-  config.py               Constantes de caminho, DATABASE_URL, APP_BASE_URL, credenciais WA
+  config.py               APP_BASE_URL, senha administrativa, credenciais WA e ntfy
 
 documents/
   lista_compras.py        Geração do DOCX da lista de compras
   orcamento.py            Geração do DOCX de orçamento
   base_doc.py             Configurações base dos documentos Word
 
-migration/
-  migrate.py              CLI de importação avulsa Excel → SQLite
-
-data/
+storage/
   estoque.db              Banco de dados operacional
   uploads/                Arquivos recebidos em runtime
   exports/                Documentos gerados (DOCX, etc.)
+  backups/                Backups locais do SQLite
 
 docs/                     Documentação técnica, especificações e diagramas
 assets/                   Recursos visuais estáticos (logo, imagens)
@@ -193,18 +187,18 @@ else:
 - Páginas Streamlit usam nomes legíveis; a ordem de navegação é definida em `app.py` via `st.navigation`.
 - `pages/` nunca acessa o banco diretamente — apenas chama serviços.
 - `services/` nunca renderiza Streamlit — apenas lógica e banco.
-- Uploads em `data/uploads/`, exportações em `data/exports/`.
-- **Fuso horário**: todo o sistema (gravação, comparação e exibição) opera em hora local de Brasília (America/Sao_Paulo), como datetime naive. Usar sempre `tempo.agora()` / `tempo.hoje()` de `core/tempo.py` — nunca `datetime.utcnow()`, `datetime.now()` ou `date.today()` diretos. Timestamps antigos gravados em UTC foram convertidos por migração única (marcador `tz_local_migrada` em `schema_meta`, com backup `data/estoque_pre_tz_*.bak`).
+- Uploads em `storage/uploads/`, exportações em `storage/exports/`.
+- **Fuso horário**: todo o sistema (gravação, comparação e exibição) opera em hora local de Brasília (America/Sao_Paulo), como datetime naive. Usar sempre `tempo.agora()` / `tempo.hoje()` de `core/tempo.py` — nunca `datetime.utcnow()`, `datetime.now()` ou `date.today()` diretos. Timestamps antigos gravados em UTC são convertidos por migração única (marcador `tz_local_migrada` em `schema_meta`, com backup `storage/estoque_pre_tz_*.bak`).
 
 ---
 
 ## 9. Governança de Dados
 
-- `data/estoque.db` é a fonte da verdade.
+- `storage/estoque.db` é a fonte da verdade.
 - Nenhuma página lê Excel diretamente.
 - Nenhum serviço depende de caminho fixo de planilha.
-- Importações avulsas passam por `migration/migrate.py`.
-- Fazer backup de `data/estoque.db` antes de qualquer migração destrutiva.
+- Não há fluxo de importação Excel legado no código atual.
+- Fazer backup de `storage/estoque.db` antes de qualquer migração destrutiva.
 
 ---
 
@@ -220,10 +214,9 @@ else:
 - Pedidos de compra
 - Relatórios e exportações
 - Geração de documentos Word
-- Importação avulsa de planilhas externas
 
 **Fora do escopo:**
-- Planilhas permanentes como fonte de dados concorrente ao SQLite
+- Planilhas como fonte de dados concorrente ou fluxo legado de importação
 - API REST separada
 - Agendamento automático de notificações (disparos são manuais pela interface)
 - Aprovação automática de compras

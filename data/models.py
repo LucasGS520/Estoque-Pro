@@ -1,8 +1,8 @@
 """ Modelos ORM que representam o domínio de estoque e compras.
 
-Cada classe corresponde a uma tabela do SQLite e concentra os relacionamentos
-usados pelos serviços para navegar entre itens, fornecedores, cotações,
-movimentações, análises e logs de importação.
+Cada classe corresponde a uma tabela operacional do SQLite e concentra os
+relacionamentos usados pelos serviços para navegar entre itens, fornecedores,
+cotações, movimentações, análises e orçamentos.
 """
 
 import datetime
@@ -14,7 +14,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from core import tempo
-from core.database import Base
+from data.database import Base
 
 # Tabela de junção para associação simples item ↔ fornecedor (sem preço/data).
 item_fornecedores = Table(
@@ -342,21 +342,6 @@ class ItemListaCompra(Base):
 
     item = relationship("Item", back_populates="itens_lista_compra")
     fornecedor_sugerido = relationship("Fornecedor")
-
-
-class Importacao(Base):
-    """Log de uma execução de importação de planilhas externas."""
-
-    __tablename__ = "importacoes"
-
-    id = Column(Integer, primary_key=True)
-    arquivo_origem = Column(String(300), nullable=False)
-    tipo = Column(String(50), nullable=False)  # "estoque", "fornecedores"
-    total_linhas = Column(Integer)
-    linhas_ok = Column(Integer)
-    linhas_erro = Column(Integer)
-    erros_json = Column(Text)
-    criado_em = Column(DateTime, default=tempo.agora)
 
 
 # ---------------------------------------------------------------------------

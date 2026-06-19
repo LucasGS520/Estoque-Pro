@@ -4,8 +4,8 @@ import datetime
 import streamlit as st
 from sqlalchemy.orm import joinedload
 
-from core.database import get_session_factory
-from core.models import ItemOrcamento, Orcamento
+from data.database import get_session_factory
+from data.models import ItemOrcamento, Orcamento
 from core.ui import empty_state, section_title
 from documents.orcamento import gerar_documento_cotacao
 from services.orcamento_service import deletar_orcamento, get_orcamentos_periodo

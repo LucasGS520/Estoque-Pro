@@ -1,7 +1,7 @@
 """ Configuração de banco de dados e sessões SQLAlchemy.
 
 Expõe o `Base` declarativo dos modelos, cria o engine SQLite sob demanda e
-fornece factories de sessão para telas, serviços e rotinas de migração.
+fornece factories de sessão para telas, serviços e rotinas de manutenção.
 """
 
 import shutil
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
-from core.config import DATABASE_URL, DATA_DIR, DB_PATH
+from data.config import DATABASE_URL, DB_PATH, STORAGE_DIR
 
 Base = declarative_base()
 
@@ -19,12 +19,12 @@ _engine = None
 def get_engine():
     """Retorna o engine SQLAlchemy configurado para o SQLite local.
 
-    Cria a pasta de dados quando necessário e mantém um engine singleton por
+    Cria a pasta de storage quando necessário e mantém um engine singleton por
     processo. `check_same_thread=False` evita conflito com o ciclo do Streamlit.
     """
     global _engine
     if _engine is None:
-        DATA_DIR.mkdir(exist_ok=True)
+        STORAGE_DIR.mkdir(exist_ok=True)
         _engine = create_engine(
             DATABASE_URL,
             connect_args={"check_same_thread": False},
@@ -233,7 +233,6 @@ _COLUNAS_TZ_MIGRACAO = {
     "solicitacoes_material": ["criado_em"],
     "compras_avulsas": ["criado_em"],
     "itens_lista_compra": ["criado_em", "atualizado_em"],
-    "importacoes": ["criado_em"],
 }
 
 
@@ -283,7 +282,7 @@ def _migrar_timestamps_para_hora_local(engine):
 
 def init_db():
     """Cria as tabelas do banco caso elas ainda não existam e executa migrações de schema."""
-    from core import models  # noqa: F401 — registra todos os modelos no Base
+    from data import models  # noqa: F401 — registra todos os modelos no Base
     engine = get_engine()
     Base.metadata.create_all(engine)
     run_schema_migrations(engine)

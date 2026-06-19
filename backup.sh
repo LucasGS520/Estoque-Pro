@@ -6,9 +6,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_DIR="$SCRIPT_DIR/data"
-BACKUP_DIR="$DATA_DIR/backups"
-DB="$DATA_DIR/estoque.db"
+STORAGE_DIR="$SCRIPT_DIR/storage"
+BACKUP_DIR="$STORAGE_DIR/backups"
+DB="$STORAGE_DIR/estoque.db"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p "$BACKUP_DIR"
