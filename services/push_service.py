@@ -1,10 +1,10 @@
-"""Push notifications internas via ntfy (auto-hospedado no VPS).
+"""Push notifications internas via ntfy (opcional).
 
 Encapsula toda comunicação com o servidor ntfy. Sem dependência de
 Streamlit ou banco de dados. Falha graciosamente sem credenciais.
 
 Variáveis de ambiente (core/config.py):
-    NTFY_SERVER  — URL interna do container  (padrão: http://ntfy:80)
+    NTFY_SERVER  — URL do servidor ntfy (ex: https://ntfy.sh ou instância própria)
     NTFY_TOPIC   — tópico assinado no app    (ex: estoque-alertas)
     NTFY_TOKEN   — token de publicação       (gerado via ntfy token add)
 

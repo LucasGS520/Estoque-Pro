@@ -22,7 +22,6 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 DOCS_DIR = BASE_DIR / "docs"
 
 # URL pública da aplicação — usada para gerar links dos formulários enviados aos setores.
-# Configurar via variável de ambiente APP_BASE_URL ao fazer deploy.
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/")
 
 # Senha administrativa — protege as páginas internas do sistema.
@@ -40,7 +39,7 @@ WA_TEMPLATE_COTACAO   = os.getenv("WA_TEMPLATE_COTACAO",   "")  # template de so
 WA_TEMPLATE_LANG      = os.getenv("WA_TEMPLATE_LANG", "pt_BR")
 
 # ntfy — push notifications internas ao responsável de estoque.
-# NTFY_SERVER: URL interna do container (ex: http://ntfy:80)
+# NTFY_SERVER: URL do servidor ntfy (ex: https://ntfy.sh ou instância própria)
 # NTFY_TOPIC:  nome do tópico assinado no app ntfy (ex: estoque-alertas)
 # NTFY_TOKEN:  token de publicação gerado via "ntfy token add admin"
 NTFY_SERVER = os.getenv("NTFY_SERVER", "http://ntfy:80")

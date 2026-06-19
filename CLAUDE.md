@@ -2,47 +2,21 @@
 
 Este arquivo fornece orientações para o Claude Code (claude.ai/code) ao trabalhar com o código deste repositório.
 
-## 🚀 Ambiente de Produção
-
-O sistema está **em produção** em uma VPS:
-- **URL**: https://estoque.marketalert.com.br/
-- **Status**: Em operação 24/7
-- **Dados**: Sincronizados com banco de dados SQLite na VPS
-
-**Importante:** Todas as mudanças, diagnósticos e navegação serão executadas e validadas no sistema rodando nessa VPS.
-
-## Ambiente Local
-
-### Comandos de Desenvolvimento
+## Execução
 
 ```bash
-# Install dependencies
+# Instalar dependências
 pip install -r requirements.txt
 
-# Executar o app localmente
+# Iniciar o sistema
 streamlit run app.py
 # Disponível em http://localhost:8501
 ```
 
-**Nota:** O ambiente local é para desenvolvimento e testes apenas. O sistema em produção roda na VPS.
+O banco `data/estoque.db` é criado automaticamente na primeira execução. Nenhuma suíte de testes ou ferramenta de lint está configurada.
 
-Nenhuma suíte de testes ou ferramenta de lint está configurada.
-
-## Acesso à VPS e Deploy
-
-- **Host VPS**: 201.76.56.247
-- **Aplicação**: Streamlit rodando via Docker Compose
-- **Banco de dados**: SQLite persistente em `/data/estoque.db` dentro do container
-- **Configuração Docker**: Arquivo `docker-compose.yml` + `Dockerfile` + `nginx/nginx.conf`
-
-### Workflow de Mudanças
-1. Desenvolver e testar localmente em `http://localhost:8501`
-2. Fazer commit das mudanças no repositório
-3. Deploy na VPS: sincronizar código e reiniciar containers
-4. Validação: testes executados diretamente na URL https://estoque.marketalert.com.br/
-
-### Links Públicos (gerados dinamicamente)
-- Formulário de Solicitação (setores): `$APP_BASE_URL/Solicitar`
+### Links Públicos (gerados via APP_BASE_URL)
+- Formulário de Solicitação (setores): `$APP_BASE_URL/solicitar`
 - Aprovação de Orçamentos (diretor): `$APP_BASE_URL/Aprovacao_Orcamento?id={id}`
 
 ## Arquitetura
@@ -156,4 +130,4 @@ with SessionLocal() as session:
    - comandos executados e resultados
 7) Execute somente **UMA FASE por vez**. Ao terminar a FASE, pare e peça autorização para a próxima FASE.
 8) Se detectar duplicação/overreach fora do escopo, **interrompa e reporte**.
-9) **Todas as mudanças serão executadas e validadas na VPS** (https://estoque.marketalert.com.br/). Diagnósticos, testes e navegação devem ser feitos no sistema em produção.
+9) **Todas as mudanças devem ser validadas rodando `streamlit run app.py` localmente** antes de considerar concluídas.

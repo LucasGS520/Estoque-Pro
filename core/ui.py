@@ -514,6 +514,81 @@ def chart_title(title: str) -> None:
     )
 
 
+def inject_tabs_css() -> None:
+    """Injeta CSS que transforma st.radio(horizontal=True) em abas com underline.
+
+    Usa a paleta EstoquePro (#374151). Chame uma vez por página, antes do
+    st.radio de navegação.
+    """
+    st.markdown(
+        """
+<style>
+[data-testid="stRadio"] [role="radiogroup"] {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0 !important;
+    flex-wrap: nowrap !important;
+    border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+    padding-bottom: 0 !important;
+    margin-bottom: 0.75rem !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0.4rem 1.1rem 0.55rem 1.1rem !important;
+    margin: 0 0 -1px 0 !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    color: rgba(49, 51, 63, 0.6) !important;
+    font-size: 0.875rem !important;
+    font-weight: 400 !important;
+    white-space: nowrap !important;
+    transition: color 0.15s !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label [data-baseweb="radio"],
+[data-testid="stRadio"] [role="radiogroup"] > label input[type="radio"] {
+    display: none !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+    border-bottom: 2px solid #374151 !important;
+    color: #374151 !important;
+    font-weight: 600 !important;
+}
+[data-testid="stRadio"] [role="radiogroup"] > label:hover {
+    color: rgba(49, 51, 63, 0.85) !important;
+}
+@media (max-width: 768px) {
+    [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: wrap !important;
+        border-bottom: none !important;
+        gap: 4px !important;
+        overflow-x: visible !important;
+        margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        padding: 0.25rem 0.7rem !important;
+        font-size: 0.78rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2) !important;
+        border-radius: 4px !important;
+        margin: 0 !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color: #374151 !important;
+        color: #374151 !important;
+        background: rgba(55, 65, 81, 0.08) !important;
+    }
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def gerar_link_formulario(setor_id: int) -> str:
     """Retorna a URL pública do formulário de solicitação pré-definido para um setor."""
     from core.config import APP_BASE_URL
